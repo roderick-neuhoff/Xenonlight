@@ -10,7 +10,8 @@
 #define XVMX_QPEL     0x01   /* luma motion compensation (incl. full-pel copy) */
 #define XVMX_CHROMA   0x02   /* chroma motion compensation */
 #define XVMX_PREFETCH 0x04   /* dcbt prefetch of reference rows (XBMC-360) */
-#define XVMX_ALL      0x07
+#define XVMX_IDCT     0x08   /* 4x4 inverse transform + add, DC-only add */
+#define XVMX_ALL      0x0F
 
 #ifdef __cplusplus
 extern "C" {

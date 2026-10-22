@@ -16,6 +16,9 @@ FFMPEG = os.path.join(ROOT, "deps", "XBMC-360", "libraries", "ffmpeg")
 VCPROJ = os.path.join(FFMPEG, "vcproj")
 OUT = os.path.join(ROOT, "build", "ffmpeg")
 XEDK = os.environ.get("XEDK", r"C:\AI\xbox\dev kits\XBOX360 SDK 21256.3\extracted\XDK")
+# An installed SDK may set XEDK to its "kit" folder, which has no Jul12 compiler.
+if not os.path.isdir(os.path.join(XEDK, "TechPreview", "Jul12Compiler")):
+    XEDK = os.path.join(os.path.dirname(XEDK), "extracted", "XDK")
 JUL12 = os.path.join(XEDK, "TechPreview", "Jul12Compiler")
 
 ENV = dict(os.environ)
@@ -47,6 +50,18 @@ for _name, _ctx, _args, _call in (
     HOOK_FIXUPS.append((f"libavcodec/{_name}.h", _decl, _decl + f"void ff_{_name}_init_xbox({_ctx});\n"))
     HOOK_FIXUPS.append((f"libavcodec/{_name}.c", _call,
                         _call + f"#ifdef _XBOX\n    ff_{_name}_init_xbox({_args});\n#endif\n"))
+
+
+HOOK_FIXUPS += [
+    ("libavcodec/h264dsp.h",
+     "void ff_h264dsp_init_x86(H264DSPContext *c, const int bit_depth,\n                         const int chroma_format_idc);\n",
+     "void ff_h264dsp_init_x86(H264DSPContext *c, const int bit_depth,\n                         const int chroma_format_idc);\n"
+     "void ff_h264dsp_init_xbox(H264DSPContext *c, const int bit_depth, const int chroma_format_idc);\n"),
+    ("libavcodec/h264dsp.c",
+     "    if (ARCH_X86) ff_h264dsp_init_x86(c, bit_depth, chroma_format_idc);\n",
+     "    if (ARCH_X86) ff_h264dsp_init_x86(c, bit_depth, chroma_format_idc);\n"
+     "#ifdef _XBOX\n    ff_h264dsp_init_xbox(c, bit_depth, chroma_format_idc);\n#endif\n"),
+]
 
 
 def apply_fixups(fixups):

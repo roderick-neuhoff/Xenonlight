@@ -30,6 +30,7 @@ static int tested;
 static unsigned qpel_ok[2][2];     /* [size: 0 = 16, 1 = 8][0 = put, 1 = avg] */
 static unsigned chroma_ok[2][2];   /* [0 = mc8, 1 = mc4][put, avg]: bit 0 */
 static int idct_ok;                /* 4x4 IDCT, DC add and the macroblock loops */
+static int idct8_ok;               /* 8x8 IDCT, DC add and idct8_add4 */
 
 #define LOADU(p) __vor(__lvlx((p), 0), __lvrx((p), 16))
 
@@ -468,6 +469,105 @@ static void idct_add8_vmx(uint8_t **dest, const int *block_offset, int16_t *bloc
         }
 }
 
+/* Adds lanes 0..7 (signed 16-bit) to the 8 pixels at dst, clipping to 0..255. */
+static __forceinline void add_row8(uint8_t *dst, __vector4 r)
+{
+    __vector4 p = __vmrghb(__vzero(), LOADU(dst));
+    p = __vadduhm(p, r);
+    store_n(__vpkshus(p, p), dst, 8);
+}
+
+/* One 8-point pass of ff_h264_idct8_add over s[0..7], in place. */
+static __forceinline void idct8_1d(__vector4 *s, __vector4 one, __vector4 two)
+{
+    __vector4 a0 = __vadduhm(s[0], s[4]), a2 = __vsubuhm(s[0], s[4]);
+    __vector4 a4 = __vsubuhm(__vsrah(s[2], one), s[6]), a6 = __vadduhm(__vsrah(s[6], one), s[2]);
+    __vector4 b0 = __vadduhm(a0, a6), b2 = __vadduhm(a2, a4), b4 = __vsubuhm(a2, a4), b6 = __vsubuhm(a0, a6);
+    __vector4 a1 = __vsubuhm(__vsubuhm(__vsubuhm(s[5], s[3]), s[7]), __vsrah(s[7], one));
+    __vector4 a3 = __vsubuhm(__vsubuhm(__vadduhm(s[1], s[7]), s[3]), __vsrah(s[3], one));
+    __vector4 a5 = __vadduhm(__vadduhm(__vsubuhm(s[7], s[1]), s[5]), __vsrah(s[5], one));
+    __vector4 a7 = __vadduhm(__vadduhm(__vadduhm(s[3], s[5]), s[1]), __vsrah(s[1], one));
+    __vector4 b1 = __vadduhm(__vsrah(a7, two), a1), b3 = __vadduhm(a3, __vsrah(a5, two));
+    __vector4 b5 = __vsubuhm(__vsrah(a3, two), a5), b7 = __vsubuhm(a7, __vsrah(a1, two));
+
+    s[0] = __vadduhm(b0, b7);
+    s[7] = __vsubuhm(b0, b7);
+    s[1] = __vadduhm(b2, b5);
+    s[6] = __vsubuhm(b2, b5);
+    s[2] = __vadduhm(b4, b3);
+    s[5] = __vsubuhm(b4, b3);
+    s[3] = __vadduhm(b6, b1);
+    s[4] = __vsubuhm(b6, b1);
+}
+
+/* 8x8 transpose of 16-bit lanes: d[c] lane i = s[i] lane c. */
+static __forceinline void transpose8(const __vector4 *s, __vector4 *d)
+{
+    __vector4 t0 = __vmrghh(s[0], s[4]), t1 = __vmrglh(s[0], s[4]);
+    __vector4 t2 = __vmrghh(s[1], s[5]), t3 = __vmrglh(s[1], s[5]);
+    __vector4 t4 = __vmrghh(s[2], s[6]), t5 = __vmrglh(s[2], s[6]);
+    __vector4 t6 = __vmrghh(s[3], s[7]), t7 = __vmrglh(s[3], s[7]);
+    __vector4 u0 = __vmrghh(t0, t4), u1 = __vmrglh(t0, t4), u2 = __vmrghh(t1, t5), u3 = __vmrglh(t1, t5);
+    __vector4 u4 = __vmrghh(t2, t6), u5 = __vmrglh(t2, t6), u6 = __vmrghh(t3, t7), u7 = __vmrglh(t3, t7);
+
+    d[0] = __vmrghh(u0, u4);
+    d[1] = __vmrglh(u0, u4);
+    d[2] = __vmrghh(u1, u5);
+    d[3] = __vmrglh(u1, u5);
+    d[4] = __vmrghh(u2, u6);
+    d[5] = __vmrglh(u2, u6);
+    d[6] = __vmrghh(u3, u7);
+    d[7] = __vmrglh(u3, u7);
+}
+
+/* One 8x8 block, as ff_h264_idct8_add: columns, transpose, rows, >> 6, add, clear. */
+static void idct8_add_vmx(uint8_t *dst, int16_t *block, int stride)
+{
+    __vector4 z = __vzero(), one = __vspltish(1), two = __vspltish(2), six = __vspltish(6);
+    __vector4 c32 = __vsldoi(__vslh(one, __vspltish(5)), z, 14);   /* 32 in lane 0 only */
+    __vector4 s[8], t[8];
+    int i;
+
+    for (i = 0; i < 8; i++)
+        s[i] = __lvx(block, 16 * i);
+    s[0] = __vadduhm(s[0], c32);
+    idct8_1d(s, one, two);
+    transpose8(s, t);
+    idct8_1d(t, one, two);
+    for (i = 0; i < 8; i++) {
+        add_row8(dst + i * stride, __vsrah(t[i], six));
+        __stvx(z, block, 16 * i);
+    }
+}
+
+/* DC-only 8x8 block, as ff_h264_idct8_dc_add. */
+static void idct8_dc_add_vmx(uint8_t *dst, int16_t *block, int stride)
+{
+    __vector4 c32 = __vslh(__vspltish(1), __vspltish(5));
+    __vector4 dc = __vsplth(__vsrah(__vadduhm(__lvx(block, 0), c32), __vspltish(6)), 0);
+    int i;
+
+    block[0] = 0;
+    for (i = 0; i < 8; i++)
+        add_row8(dst + i * stride, dc);
+}
+
+static void idct8_add4_vmx(uint8_t *dst, const int *block_offset, int16_t *block, int stride,
+                           const uint8_t nnzc[15 * 8])
+{
+    int i;
+
+    for (i = 0; i < 16; i += 4) {
+        int nnz = nnzc[xscan8[i]];
+        if (nnz) {
+            if (nnz == 1 && block[i * 16])
+                idct8_dc_add_vmx(dst + block_offset[i], block + i * 16, stride);
+            else
+                idct8_add_vmx(dst + block_offset[i], block + i * 16, stride);
+        }
+    }
+}
+
 /* ------------------------------------------------------------ init hooks */
 
 void ff_h264dsp_init_xbox(H264DSPContext *c, const int bit_depth, const int chroma_format_idc)
@@ -480,6 +580,11 @@ void ff_h264dsp_init_xbox(H264DSPContext *c, const int bit_depth, const int chro
     c->h264_idct_add16intra = idct_add16intra_vmx;
     if (chroma_format_idc <= 1)
         c->h264_idct_add8 = idct_add8_vmx;
+    if (idct8_ok) {
+        c->h264_idct8_add = idct8_add_vmx;
+        c->h264_idct8_dc_add = idct8_dc_add_vmx;
+        c->h264_idct8_add4 = idct8_add4_vmx;
+    }
 }
 
 void ff_h264qpel_init_xbox(H264QpelContext *c, int bit_depth)
@@ -712,14 +817,44 @@ int ff_xbox_dsp_selftest(void (*log)(const char *line))
         idct_ok = ok;
         if (!ok)
             failures++;
+
+        /* 8x8: four blocks of 64 coefficients at 0, 4, 8 and 12 (16 apart in units of 16). */
+        for (trial = 0, ok = 1; trial < 300 && ok; trial++) {
+            fill(dref, sizeof(dref));
+            memcpy(dvmx, dref, sizeof(dref));
+            for (i = 0; i < 16 * 16; i++) {
+                unsigned r = rng();
+                cref[i] = (r & 3) ? 0 : (int16_t)((int)(r >> 4) % 400 - 200);
+            }
+            for (i = 0; i < 16; i++)
+                if (rng() % 3 == 0)
+                    cref[i * 16] = (int16_t)((int)(rng() % 2000) - 1000);
+            memcpy(cvmx, cref, sizeof(cref));
+            for (i = 0; i < (int)sizeof(nnz); i++)
+                nnz[i] = (uint8_t)(rng() % 3);
+            hc.h264_idct8_add4(dref, offs, cref, T_STRIDE, nnz);
+            idct8_add4_vmx(dvmx, offs, cvmx, T_STRIDE, nnz);
+            if (!same(dref, dvmx, T_STRIDE, 16, &fx, &fy)) {
+                report(log, "idct8_add", 8, 0, dref, dvmx, fx, fy);
+                ok = 0;
+            } else if (memcmp(cref, cvmx, sizeof(cref)) != 0) {
+                if (log)
+                    log("vmx selftest: idct8 leaves different coefficients behind\n");
+                ok = 0;
+            }
+        }
+        idct8_ok = ok;
+        if (!ok)
+            failures++;
     }
 
     tested = 1;
     if (log) {
         _snprintf(line, sizeof(line), "vmx selftest: qpel16 put %04x avg %04x, qpel8 put %04x avg %04x, "
-                  "chroma8 %d/%d, chroma4 %d/%d, idct %d, %d mismatches\n",
+                  "chroma8 %d/%d, chroma4 %d/%d, idct %d, idct8 %d, %d mismatches\n",
                   qpel_ok[0][0], qpel_ok[0][1], qpel_ok[1][0], qpel_ok[1][1],
-                  chroma_ok[0][0], chroma_ok[0][1], chroma_ok[1][0], chroma_ok[1][1], idct_ok, failures);
+                  chroma_ok[0][0], chroma_ok[0][1], chroma_ok[1][0], chroma_ok[1][1], idct_ok, idct8_ok,
+                  failures);
         line[sizeof(line) - 1] = '\0';
         log(line);
     }

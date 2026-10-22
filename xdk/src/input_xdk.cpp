@@ -1,5 +1,10 @@
 /*
  * Controllers through XInput: wired and wireless pads, up to four.
+ *
+ * Mouse mode (as in Moonlight-qt): holding Start alone for a second switches
+ * a pad between controller and mouse, confirmed by a short rumble. In mouse
+ * mode the left stick moves the pointer, the right stick scrolls, A/B/X are
+ * the left/right/middle buttons and LB/RB are back/forward.
  */
 #include "xdk.h"
 
@@ -107,19 +112,142 @@ int input_menu_pressed(void)
     return pressed;
 }
 
+/* ------------------------------------------------------------ mouse mode */
+
+#define MOUSE_TOGGLE_MS 1000
+#define STICK_DEADZONE  7849       /* XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE */
+#define POINTER_SPEED   1400.0f    /* pixels per second at full tilt */
+#define SCROLL_SPEED    1200.0f    /* wheel units (120 = one notch) per second */
+
+struct mouse_pad {
+    bool on;
+    bool holding;           /* Start alone is held ... */
+    bool toggled;           /* ... and this hold already switched modes */
+    DWORD held_since;
+    DWORD rumble_off;       /* end of the confirmation rumble, 0 if none */
+    int buttons;            /* pad flags of the mouse buttons currently down */
+    float fx, fy, fv, fh;   /* sub-pixel and sub-unit remainders */
+};
+
+static const struct {
+    int flag;
+    int button;
+} mouse_buttons[] = {
+    { A_FLAG, BUTTON_LEFT },
+    { B_FLAG, BUTTON_RIGHT },
+    { X_FLAG, BUTTON_MIDDLE },
+    { LB_FLAG, BUTTON_X1 },
+    { RB_FLAG, BUTTON_X2 },
+};
+#define MOUSE_BUTTON_FLAGS (A_FLAG | B_FLAG | X_FLAG | LB_FLAG | RB_FLAG)
+
+/* Stick position to -1..1 outside the dead zone, squared for fine control near the centre. */
+static float stick(short v)
+{
+    float a = v < 0 ? -(float)v : (float)v, n;
+
+    if (a <= STICK_DEADZONE)
+        return 0;
+    n = (a - STICK_DEADZONE) / (32767.0f - STICK_DEADZONE);
+    if (n > 1)
+        n = 1;
+    n *= n;
+    return v < 0 ? -n : n;
+}
+
+/* Adds rate * dt to *acc and returns (and removes) its whole part. */
+static int take(float *acc, float rate, float dt)
+{
+    int whole;
+
+    *acc += rate * dt;
+    whole = (int)*acc;
+    *acc -= whole;
+    return whole;
+}
+
+static void mouse_set_buttons(struct mouse_pad *m, int want)
+{
+    unsigned b;
+
+    for (b = 0; b < sizeof(mouse_buttons) / sizeof(mouse_buttons[0]); b++) {
+        int f = mouse_buttons[b].flag;
+        if ((want ^ m->buttons) & f)
+            LiSendMouseButtonEvent((want & f) ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE,
+                                   mouse_buttons[b].button);
+    }
+    m->buttons = want;
+}
+
+/* Watches for the Start hold; returns true when the pad just switched modes. */
+static bool mouse_toggle(struct mouse_pad *m, unsigned short pad, int buttons, DWORD now)
+{
+    if (m->rumble_off && (int)(now - m->rumble_off) >= 0) {
+        input_rumble(pad, 0, 0);
+        m->rumble_off = 0;
+    }
+    if (buttons != PLAY_FLAG) {
+        m->holding = false;
+        return false;
+    }
+    if (!m->holding) {
+        m->holding = true;
+        m->toggled = false;
+        m->held_since = now;
+    }
+    if (m->toggled || now - m->held_since < MOUSE_TOGGLE_MS)
+        return false;
+    m->toggled = true;
+    m->on = !m->on;
+    if (!m->on)
+        mouse_set_buttons(m, 0);
+    m->fx = m->fy = m->fv = m->fh = 0;
+    /* Long buzz for mouse, short one for controller. */
+    input_rumble(pad, 0x6000, 0x6000);
+    m->rumble_off = (now + (m->on ? 250 : 100)) | 1;
+    return true;
+}
+
+static void mouse_send(struct mouse_pad *m, const struct pad *p, float dt)
+{
+    int dx = take(&m->fx, stick(p->lx) * POINTER_SPEED, dt);
+    int dy = take(&m->fy, -stick(p->ly) * POINTER_SPEED, dt);
+    int v = take(&m->fv, stick(p->ry) * SCROLL_SPEED, dt);
+    int h = take(&m->fh, stick(p->rx) * SCROLL_SPEED, dt);
+
+    mouse_set_buttons(m, p->buttons & MOUSE_BUTTON_FLAGS);
+    if (dx || dy)
+        LiSendMouseMoveEvent((short)dx, (short)dy);
+    if (v)
+        LiSendHighResScrollEvent((short)v);
+    if (h)
+        LiSendHighResHScrollEvent((short)h);
+}
+
+/* ------------------------------------------------------------ streaming */
+
 static DWORD WINAPI input_stream_main(LPVOID arg)
 {
     struct pad pads[MAX_PADS], last[MAX_PADS];
+    struct mouse_pad mouse[MAX_PADS];
     bool announced[MAX_PADS] = { false };
+    DWORD prev = GetTickCount();
     int i;
     (void)arg;
 
     memset(last, 0, sizeof(last));
+    memset(mouse, 0, sizeof(mouse));
     while (stream_active) {
         int mask = input_poll(pads);
+        DWORD now = GetTickCount();
+        float dt = (now - prev) / 1000.0f;
 
+        prev = now;
+        if (dt > 0.05f)
+            dt = 0.05f;   /* after a stall, don't jump the pointer across the screen */
         for (i = 0; i < MAX_PADS; i++) {
             struct pad *p = &pads[i];
+            struct mouse_pad *m = &mouse[i];
 
             if (!p->present)
                 continue;
@@ -132,6 +260,19 @@ static DWORD WINAPI input_stream_main(LPVOID arg)
             }
             if ((p->buttons & QUIT_COMBO) == QUIT_COMBO) {
                 quit_requested = true;
+                continue;
+            }
+            if (mouse_toggle(m, (unsigned short)i, p->buttons, now)) {
+                if (m->on) {
+                    /* Release everything on the host's virtual pad (Start is still held). */
+                    LiSendMultiControllerEvent((short)i, (short)mask, 0, 0, 0, 0, 0, 0, 0);
+                } else {
+                    /* The host's pad is still neutral; the next change (releasing Start) sends the real state. */
+                    last[i] = *p;
+                }
+            }
+            if (m->on) {
+                mouse_send(m, p, dt);
                 continue;
             }
             if (memcmp(p, &last[i], sizeof(*p)) != 0) {

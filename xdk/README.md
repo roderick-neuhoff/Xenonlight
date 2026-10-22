@@ -58,6 +58,11 @@ main menu; the certificate is saved next to the .xex, so it survives reboots.
 
 Leave a stream with **Back + Start + LB + RB**. The Guide button returns to the dashboard.
 
+**Mouse mode:** hold **Start** (alone) for a second to turn a controller into a mouse; a long
+rumble confirms it, and holding Start again switches back (short rumble). The left stick moves
+the pointer, the right stick scrolls, **A / B / X** are the left / right / middle buttons and
+**LB / RB** are back / forward. The game sees Start held for that second, as in Moonlight-qt.
+
 ## Settings
 
 Besides the shared ones (resolution, FPS, bitrate, V-Sync, audio; see the main

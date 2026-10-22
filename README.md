@@ -33,6 +33,8 @@ Get the latest build from [Releases](../../releases):
 2. **Pair with host**: the 360 shows a PIN; enter it in Sunshine's web UI under *PIN*.
 3. **Start streaming**: pick a game from the grid. X quits a running game.
 4. To leave a stream, hold **Back + Start + LB + RB**.
+5. Dashboard version: hold **Start** for a second to use the controller as a **mouse**
+   (left stick moves, right stick scrolls, A/B = left/right click). Hold it again to switch back.
 
 Tips: 720p30 at 5–8 Mbps is the sweet spot. In Sunshine (*Configuration → NVIDIA NVENC*),
 **"Prefer CAVLC over CABAC"** makes decoding cheaper. The stats screen after each stream shows

@@ -655,6 +655,7 @@ static const struct {
     { "Vector luma motion comp.", XVMX_QPEL },
     { "Vector chroma motion comp.", XVMX_CHROMA },
     { "Prefetch", XVMX_PREFETCH },
+    { "Vector inverse transform", XVMX_IDCT },
     { "All vector code", XVMX_ALL },
     { "Plain C (again)", 0 },
 };

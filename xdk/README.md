@@ -57,3 +57,51 @@ it from Aurora's file browser (or add the folder to Aurora's scan paths). Pair o
 main menu; the certificate is saved next to the .xex, so it survives reboots.
 
 Leave a stream with **Back + Start + LB + RB**. The Guide button returns to the dashboard.
+
+## Settings
+
+Besides the shared ones (resolution, FPS, bitrate, V-Sync, audio; see the main
+[README](../README.md#settings-and-performance)), this build has:
+
+- **Fast decode** (default on): FFmpeg skips H.264's in-loop deblocking filter, which costs a
+  large share of the decode time. Frames are then slightly blocky unless *GPU picture*
+  cleans them up.
+- **GPU picture**, used with *Fast decode* on:
+  - *Off*: frames are shown as decoded.
+  - *Deblock* (default): the Xenos GPU runs H.264's normal deblocking filter on the luma
+    plane: block edges on the 8-pixel grid, strengths from each macroblock's QP, two passes
+    (vertical, then horizontal edges). It isn't bit-exact (references stay unfiltered), but
+    it removes most visible blocking at almost no CPU cost.
+  - *Deblock + sharpen*: also adds mild sharpening during scaling, which helps 480p and
+    low-bitrate streams.
+
+  In every mode the picture is scaled to the TV with a bicubic (Catmull-Rom) filter. With
+  *Fast decode* off the decoder deblocks exactly, so GPU deblocking is skipped.
+- **Decoder benchmark**: the first stream of at least 60 frames is recorded to
+  `Moonlight\moonlight\capture.bin` (delete it to record again). The benchmark decodes that
+  recording with plain C and with each group of vector code (luma and chroma motion
+  compensation, prefetch, inverse transform, then all together), and shows the average
+  decode time per frame. Every run is compared with the plain C pictures, and
+  *(picture differs!)* would mean a bug in the vector code.
+
+## Vector (VMX) decoding
+
+Xenon's VMX128 unit lacks the integer multiplies FFmpeg's AltiVec code relies on, so
+`xdk/ffmpeg_xbox/h264_vmx.c` has its own versions built from shifts and adds: luma qpel and
+chroma motion compensation, and the 4x4 and 8x8 inverse transforms. `build_ffmpeg.py` hooks
+them into FFmpeg's init functions.
+
+At startup `ff_xbox_dsp_selftest()` runs each function and its C counterpart on random data.
+Only functions whose output is bit-identical get installed. The result is logged, e.g.:
+
+```
+vmx selftest: qpel16 put ffff avg ffff, qpel8 put ffff avg ffff, chroma8 1/1, chroma4 1/1, idct 1, idct8 1, 0 mismatches
+```
+
+## Debug log
+
+Log lines are broadcast as UDP datagrams to port 47555 on the local network. On the PC:
+
+```powershell
+python xdk\scripts\log_listener.py xdk\build\console.log
+```

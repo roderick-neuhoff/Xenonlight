@@ -1,0 +1,29 @@
+# Xenonlight: only the Moonlight sources are published. Everything else in this
+# folder (the Microsoft SDK, downloaded dependencies, build output, side projects)
+# is ignored by default, and published folders are listed explicitly.
+/*
+!/.gitignore
+!/LICENSE
+!/README.md
+!/Makefile
+!/src/
+!/compat/
+!/hwpthread/
+!/scripts/
+!/tools/
+!/third_party/
+!/assets/
+!/xdk/
+
+# Inside xdk/: downloaded third-party sources and build output.
+/xdk/deps/
+/xdk/build/
+
+*.o
+*.obj
+*.d
+*.elf
+*.elf32
+*.xex
+__pycache__/
+!/.gitattributes

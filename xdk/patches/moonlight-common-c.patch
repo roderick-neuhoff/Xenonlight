@@ -1,0 +1,446 @@
+diff --git a/src/Connection.c b/src/Connection.c
+index bac9a6e..6e28327 100644
+--- a/src/Connection.c
++++ b/src/Connection.c
+@@ -187,7 +187,7 @@ static bool parseRtspPortNumberFromUrl(const char* rtspSessionUrl, uint16_t* por
+     }
+ 
+     // Pick the last colon in the string to match the port number
+-    char* portNumberStart = strrchr(rtspSessionUrl, ':');
++    char* portNumberStart = (char *)strrchr(rtspSessionUrl, ':');
+     if (portNumberStart == NULL) {
+         return false;
+     }
+diff --git a/src/ControlStream.c b/src/ControlStream.c
+index 2dfb898..0445973 100644
+--- a/src/ControlStream.c
++++ b/src/ControlStream.c
+@@ -388,13 +388,12 @@ static void queueFrameInvalidationTuple(uint32_t startFrame, uint32_t endFrame)
+ 
+     if (isReferenceFrameInvalidationEnabled()) {
+         PQUEUED_REFERENCE_FRAME_CONTROL qfit;
+-        qfit = malloc(sizeof(*qfit));
++        qfit = (PQUEUED_REFERENCE_FRAME_CONTROL)malloc(sizeof(*qfit));
+         if (qfit != NULL) {
+-            *qfit = (QUEUED_REFERENCE_FRAME_CONTROL){
+-                .startFrame = startFrame,
+-                .endFrame = endFrame,
+-                .invalidate = true,
+-            };
++            memset(qfit, 0, sizeof(*qfit));
++            qfit->startFrame = startFrame;
++            qfit->endFrame = endFrame;
++            qfit->invalidate = true;
+             if (LbqOfferQueueItem(&referenceFrameControlQueue, qfit, &qfit->entry) == LBQ_BOUND_EXCEEDED) {
+                 // Too many invalidation tuples, so we need an IDR frame now
+                 Limelog("RFI range list reached maximum size limit\n");
+@@ -435,12 +434,11 @@ void connectionReceivedCompleteFrame(uint32_t frameIndex, bool frameIsLTR) {
+     if (frameIsLTR && IS_SUNSHINE() && isReferenceFrameInvalidationEnabled()) {
+         // Queue LTR frame ACK control message
+         PQUEUED_REFERENCE_FRAME_CONTROL qfit;
+-        qfit = malloc(sizeof(*qfit));
++        qfit = (PQUEUED_REFERENCE_FRAME_CONTROL)malloc(sizeof(*qfit));
+         if (qfit != NULL) {
+-            *qfit = (QUEUED_REFERENCE_FRAME_CONTROL){
+-                .startFrame = frameIndex,
+-                .invalidate = false,
+-            };
++            memset(qfit, 0, sizeof(*qfit));
++            qfit->startFrame = frameIndex;
++            qfit->invalidate = false;
+             if (LbqOfferQueueItem(&referenceFrameControlQueue, qfit, &qfit->entry) == LBQ_BOUND_EXCEEDED) {
+                 // This shouldn't happen and indicates that something has gone wrong with the queue
+                 LC_ASSERT(false);
+@@ -459,7 +457,7 @@ void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus) {
+     }
+ 
+     // Queue a frame FEC status message. This is best-effort only.
+-    PQUEUED_FRAME_FEC_STATUS queuedFecStatus = malloc(sizeof(*queuedFecStatus));
++    PQUEUED_FRAME_FEC_STATUS queuedFecStatus = (PQUEUED_FRAME_FEC_STATUS)malloc(sizeof(*queuedFecStatus));
+     if (queuedFecStatus != NULL) {
+         queuedFecStatus->fecStatus = *fecStatus;
+         if (LbqOfferQueueItem(&frameFecStatusQueue, queuedFecStatus, &queuedFecStatus->entry) == LBQ_BOUND_EXCEEDED) {
+@@ -637,7 +635,7 @@ static bool decryptControlMessageToV1(PNVCTL_ENCRYPTED_PACKET_HEADER encPacket,
+     }
+ 
+     int plaintextLength = encPacket->length - sizeof(encPacket->seq) - AES_GCM_TAG_LENGTH;
+-    *packet = malloc(plaintextLength);
++    *packet = (PNVCTL_ENET_PACKET_HEADER_V1)malloc(plaintextLength);
+     if (*packet == NULL) {
+         return false;
+     }
+@@ -822,7 +820,7 @@ static bool sendMessageTcp(short ptype, short paylen, const void* payload) {
+ 
+     LC_ASSERT(AppVersionQuad[0] < 5);
+ 
+-    packet = malloc(sizeof(*packet) + paylen);
++    packet = (PNVCTL_TCP_PACKET_HEADER)malloc(sizeof(*packet) + paylen);
+     if (packet == NULL) {
+         return false;
+     }
+@@ -1034,7 +1032,7 @@ static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLe
+ 
+     LC_ASSERT(needsAsyncCallback(ctlHdr->type));
+ 
+-    queuedCb = malloc(sizeof(*queuedCb));
++    queuedCb = (PQUEUED_ASYNC_CALLBACK)malloc(sizeof(*queuedCb));
+     if (!queuedCb) {
+         return;
+     }
+@@ -1446,7 +1444,7 @@ static void lossStatsThreadFunc(void* context) {
+         // Sunshine should use the newer codepath above
+         LC_ASSERT(!IS_SUNSHINE());
+ 
+-        lossStatsPayload = malloc(payloadLengths[IDX_LOSS_STATS]);
++        lossStatsPayload = (char *)malloc(payloadLengths[IDX_LOSS_STATS]);
+         if (lossStatsPayload == NULL) {
+             Limelog("Loss Stats: malloc() failed\n");
+             ListenerCallbacks.connectionTerminated(-1);
+@@ -1537,10 +1535,11 @@ static void requestInvalidateReferenceFrames(uint32_t startFrame, uint32_t endFr
+     LC_ASSERT(startFrame <= endFrame);
+     LC_ASSERT(isReferenceFrameInvalidationEnabled());
+ 
+-    SS_RFI_REQUEST payload = {
+-        .firstFrameIndex = LE32(startFrame),
+-        .lastFrameIndex = LE32(endFrame),
+-    };
++    SS_RFI_REQUEST payload;
++
++    memset(&payload, 0, sizeof(payload));
++    payload.firstFrameIndex = LE32(startFrame);
++    payload.lastFrameIndex = LE32(endFrame);
+ 
+     // Send the reference frame invalidation request and read the response
+     if (!sendMessageAndDiscardReply(packetTypes[IDX_INVALIDATE_REF_FRAMES],
+@@ -1560,9 +1559,10 @@ static void requestInvalidateReferenceFrames(uint32_t startFrame, uint32_t endFr
+ static void confirmLongtermReferenceFrame(uint32_t frameIndex) {
+     LC_ASSERT(isReferenceFrameInvalidationEnabled());
+ 
+-    SS_LTR_FRAME_ACK payload = {
+-        .frameIndex = LE32(frameIndex),
+-    };
++    SS_LTR_FRAME_ACK payload;
++
++    memset(&payload, 0, sizeof(payload));
++    payload.frameIndex = LE32(frameIndex);
+ 
+     // Send LTR frame ACK and don't wait for response
+     if (!sendMessageAndForget(SS_LTR_FRAME_ACK_PTYPE,
+diff --git a/src/FakeCallbacks.c b/src/FakeCallbacks.c
+index 29fdf18..f5c04b7 100644
+--- a/src/FakeCallbacks.c
++++ b/src/FakeCallbacks.c
+@@ -7,11 +7,11 @@ static void fakeDrCleanup(void) {}
+ static int fakeDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit) { return DR_OK; }
+ 
+ static DECODER_RENDERER_CALLBACKS fakeDrCallbacks = {
+-    .setup = fakeDrSetup,
+-    .start = fakeDrStart,
+-    .stop = fakeDrStop,
+-    .cleanup = fakeDrCleanup,
+-    .submitDecodeUnit = fakeDrSubmitDecodeUnit,
++    fakeDrSetup,
++    fakeDrStart,
++    fakeDrStop,
++    fakeDrCleanup,
++    fakeDrSubmitDecodeUnit,
+ };
+ 
+ static int fakeArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int arFlags) { return 0; }
+@@ -21,11 +21,11 @@ static void fakeArCleanup(void) {}
+ static void fakeArDecodeAndPlaySample(char* sampleData, int sampleLength) {}
+ 
+ AUDIO_RENDERER_CALLBACKS fakeArCallbacks = {
+-    .init = fakeArInit,
+-    .start = fakeArStart,
+-    .stop = fakeArStop,
+-    .cleanup = fakeArCleanup,
+-    .decodeAndPlaySample = fakeArDecodeAndPlaySample,
++    fakeArInit,
++    fakeArStart,
++    fakeArStop,
++    fakeArCleanup,
++    fakeArDecodeAndPlaySample,
+ };
+ 
+ static void fakeClStageStarting(int stage) {}
+@@ -43,19 +43,19 @@ static void fakeClSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFl
+ static void fakeClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t b) {}
+ 
+ static CONNECTION_LISTENER_CALLBACKS fakeClCallbacks = {
+-    .stageStarting = fakeClStageStarting,
+-    .stageComplete = fakeClStageComplete,
+-    .stageFailed = fakeClStageFailed,
+-    .connectionStarted = fakeClConnectionStarted,
+-    .connectionTerminated = fakeClConnectionTerminated,
+-    .logMessage = fakeClLogMessage,
+-    .rumble = fakeClRumble,
+-    .connectionStatusUpdate = fakeClConnectionStatusUpdate,
+-    .setHdrMode = fakeClSetHdrMode,
+-    .rumbleTriggers = fakeClRumbleTriggers,
+-    .setMotionEventState = fakeClSetMotionEventState,
+-    .setControllerLED = fakeClSetControllerLED,
+-    .setAdaptiveTriggers = fakeClSetAdaptiveTriggers,
++    fakeClStageStarting,
++    fakeClStageComplete,
++    fakeClStageFailed,
++    fakeClConnectionStarted,
++    fakeClConnectionTerminated,
++    fakeClLogMessage,
++    fakeClRumble,
++    fakeClConnectionStatusUpdate,
++    fakeClSetHdrMode,
++    fakeClRumbleTriggers,
++    fakeClSetMotionEventState,
++    fakeClSetControllerLED,
++    fakeClSetAdaptiveTriggers,
+ };
+ 
+ void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_RENDERER_CALLBACKS* arCallbacks,
+diff --git a/src/InputStream.c b/src/InputStream.c
+index 864d1c9..7a70f57 100644
+--- a/src/InputStream.c
++++ b/src/InputStream.c
+@@ -212,7 +212,7 @@ static PPACKET_HOLDER allocatePacketHolder(int extraLength) {
+         // but this is on purpose. It allows us assume we have a full holder even
+         // if packetLength < sizeof(*holder) and put this allocation into the free
+         // list.
+-        return malloc(sizeof(*holder) + extraLength);
++        return (PPACKET_HOLDER)malloc(sizeof(*holder) + extraLength);
+     }
+ 
+     // Grab an entry from the free list (if available)
+@@ -228,7 +228,7 @@ static PPACKET_HOLDER allocatePacketHolder(int extraLength) {
+         LC_ASSERT(err == LBQ_NO_ELEMENT);
+ 
+         // Otherwise we'll have to allocate
+-        return malloc(sizeof(*holder));
++        return (PPACKET_HOLDER)malloc(sizeof(*holder));
+     }
+ }
+ 
+diff --git a/src/Platform.h b/src/Platform.h
+index f219864..cd8af6f 100644
+--- a/src/Platform.h
++++ b/src/Platform.h
+@@ -156,7 +156,8 @@
+ #error Please define your platform byteswap macros!
+ #endif
+ 
+-#if (defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)) || defined(__BIG_ENDIAN__)
++#if (defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)) || defined(__BIG_ENDIAN__) || \
++    defined(_M_PPCBE) /* Xbox 360 compiler */
+ #define LE16(x) BSWAP16(x)
+ #define LE32(x) BSWAP32(x)
+ #define LE64(x) BSWAP64(x)
+diff --git a/src/PlatformSockets.c b/src/PlatformSockets.c
+index cec96f3..dfd48c7 100644
+--- a/src/PlatformSockets.c
++++ b/src/PlatformSockets.c
+@@ -534,7 +534,13 @@ SOCKET connectTcpSocket(struct sockaddr_storage* dstaddr, SOCKADDR_LEN addrlen,
+         SetLastSocketError(ETIMEDOUT);
+         return INVALID_SOCKET;
+     }
+-#ifdef __3DS__ //SO_ERROR is unreliable on 3DS
++#if defined(_XBOX)
++    else {
++        // The Xbox 360's Winsock has no SO_ERROR; like desktop Winsock it reports
++        // a failed connect through select()'s exception set (POLLERR here).
++        err = (pfd.revents & POLLERR) ? WSAECONNREFUSED : 0;
++    }
++#elif defined(__3DS__) //SO_ERROR is unreliable on 3DS
+     else {
+         char test_buffer[1];
+         err = (int)recv(s, test_buffer, 1, MSG_PEEK);
+diff --git a/src/RecorderCallbacks.c b/src/RecorderCallbacks.c
+index 840ac19..90b3f3a 100644
+--- a/src/RecorderCallbacks.c
++++ b/src/RecorderCallbacks.c
+@@ -13,7 +13,7 @@ static AUDIO_RENDERER_CALLBACKS realArCallbacks;
+ 
+ static int recDrSetup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags)
+ {
+-    const char* path = context;
++    const char* path = (const char *)context;
+     
+     if (path != NULL) {
+         videoFile = fopen(path, "wb");
+@@ -53,7 +53,7 @@ static int recDrSubmitDecodeUnit(PDECODE_UNIT decodeUnit)
+ 
+ static int recArInit(int audioConfiguration, POPUS_MULTISTREAM_CONFIGURATION opusConfig, void* context, int arFlags)
+ {
+-    const char* path = context;
++    const char* path = (const char *)context;
+ 
+     if (path != NULL) {
+         audioFile = fopen(path, "wb");
+diff --git a/src/RtpAudioQueue.c b/src/RtpAudioQueue.c
+index d9ef7f1..74bc74d 100644
+--- a/src/RtpAudioQueue.c
++++ b/src/RtpAudioQueue.c
+@@ -138,7 +138,7 @@ static PRTPA_FEC_BLOCK allocateFecBlock(PRTP_AUDIO_QUEUE queue, uint16_t blockSi
+     // We either didn't have any free entries or the block
+     // size didn't match, so allocate a new FEC block now.
+     uint16_t dataPacketSize = blockSize + sizeof(RTP_PACKET);
+-    return malloc(sizeof(*block) + (RTPA_DATA_SHARDS * dataPacketSize) + (RTPA_FEC_SHARDS * blockSize));
++    return (PRTPA_FEC_BLOCK)malloc(sizeof(*block) + (RTPA_DATA_SHARDS * dataPacketSize) + (RTPA_FEC_SHARDS * blockSize));
+ }
+ 
+ static void freeFecBlockHead(PRTP_AUDIO_QUEUE queue) {
+@@ -672,7 +672,7 @@ PRTP_PACKET RtpaGetQueuedPacket(PRTP_AUDIO_QUEUE queue, uint16_t customHeaderLen
+         if (nextBlock->marks[nextBlock->nextDataPacketIndex]) {
+             // This packet is missing. Return an empty entry to let the caller
+             // know to perform packet loss concealment for this frame.
+-            lostPacket = malloc(customHeaderLength);
++            lostPacket = (PRTP_PACKET)malloc(customHeaderLength);
+             if (lostPacket == NULL) {
+                 return NULL;
+             }
+@@ -705,7 +705,7 @@ PRTP_PACKET RtpaGetQueuedPacket(PRTP_AUDIO_QUEUE queue, uint16_t customHeaderLen
+     // Return the next RTP sequence number by indexing into the most recent FEC block
+     if (queueHasPacketReady(queue)) {
+         PRTPA_FEC_BLOCK nextBlock = queue->blockHead;
+-        PRTP_PACKET packet = malloc(customHeaderLength + sizeof(RTP_PACKET) + nextBlock->blockSize);
++        PRTP_PACKET packet = (PRTP_PACKET)malloc(customHeaderLength + sizeof(RTP_PACKET) + nextBlock->blockSize);
+         if (packet == NULL) {
+             return NULL;
+         }
+diff --git a/src/RtpVideoQueue.c b/src/RtpVideoQueue.c
+index a4e022e..3af4340 100644
+--- a/src/RtpVideoQueue.c
++++ b/src/RtpVideoQueue.c
+@@ -259,8 +259,8 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
+     }
+ 
+     reed_solomon* rs = NULL;
+-    unsigned char** packets = calloc(totalPackets, sizeof(unsigned char*));
+-    unsigned char* marks = calloc(totalPackets, sizeof(unsigned char));
++    unsigned char** packets = (unsigned char **)calloc(totalPackets, sizeof(unsigned char*));
++    unsigned char* marks = (unsigned char *)calloc(totalPackets, sizeof(unsigned char));
+     if (packets == NULL || marks == NULL) {
+         ret = -2;
+         goto cleanup;
+@@ -321,7 +321,7 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
+     unsigned int i;
+     for (i = 0; i < totalPackets; i++) {
+         if (marks[i]) {
+-            packets[i] = malloc(packetBufferSize);
++            packets[i] = (unsigned char *)malloc(packetBufferSize);
+             if (packets[i] == NULL) {
+                 ret = -4;
+                 goto cleanup_packets;
+diff --git a/src/RtspConnection.c b/src/RtspConnection.c
+index e958101..3dc11a2 100644
+--- a/src/RtspConnection.c
++++ b/src/RtspConnection.c
+@@ -30,7 +30,7 @@ static ENetPeer* peer;
+ // Create RTSP Option
+ static POPTION_ITEM createOptionItem(char* option, char* content)
+ {
+-    POPTION_ITEM item = malloc(sizeof(*item));
++    POPTION_ITEM item = (POPTION_ITEM)malloc(sizeof(*item));
+     if (item == NULL) {
+         return NULL;
+     }
+@@ -317,7 +317,7 @@ static bool transactRtspMessageEnet(PRTSP_MESSAGE request, PRTSP_MESSAGE respons
+         goto Exit;
+     }
+ 
+-    responseBuffer = malloc(event.packet->dataLength);
++    responseBuffer = (char *)malloc(event.packet->dataLength);
+     if (responseBuffer == NULL) {
+         Limelog("Failed to allocate RTSP response buffer\n");
+         enet_packet_destroy(event.packet);
+@@ -344,7 +344,7 @@ static bool transactRtspMessageEnet(PRTSP_MESSAGE request, PRTSP_MESSAGE respons
+             goto Exit;
+         }
+ 
+-        responseBuffer = extendBuffer(responseBuffer, event.packet->dataLength + offset);
++        responseBuffer = (char *)extendBuffer(responseBuffer, event.packet->dataLength + offset);
+         if (responseBuffer == NULL) {
+             Limelog("Failed to extend RTSP response buffer\n");
+             enet_packet_destroy(event.packet);
+@@ -457,7 +457,7 @@ static bool transactRtspMessageTcp(PRTSP_MESSAGE request, PRTSP_MESSAGE response
+       
+             responseBufferSize = offset + 16384;
+       
+-            responseBuffer = extendBuffer(responseBuffer, responseBufferSize);
++            responseBuffer = (char *)extendBuffer(responseBuffer, responseBufferSize);
+             if (responseBuffer == NULL) {
+                 Limelog("Failed to allocate RTSP response buffer\n");
+                 goto Exit;
+@@ -904,7 +904,7 @@ static bool parseUrlAddrFromRtspUrlString(const char* rtspUrlString, char* desti
+ // a=x-nv-bwe.bwuSafeZoneLowLimit:70\r\n
+ bool parseSdpAttributeToUInt(const char* payload, const char* name, uint32_t* val) {
+     // Find the entry for the specified attribute name
+-    char* attribute = strstr(payload, name);
++    char* attribute = (char *)strstr(payload, name);
+     if (!attribute) {
+         return false;
+     }
+@@ -923,7 +923,7 @@ bool parseSdpAttributeToUInt(const char* payload, const char* name, uint32_t* va
+ 
+ bool parseSdpAttributeToInt(const char* payload, const char* name, int* val) {
+     // Find the entry for the specified attribute name
+-    char* attribute = strstr(payload, name);
++    char* attribute = (char *)strstr(payload, name);
+     if (!attribute) {
+         return false;
+     }
+diff --git a/src/RtspParser.c b/src/RtspParser.c
+index 0b8e4c9..40a3825 100644
+--- a/src/RtspParser.c
++++ b/src/RtspParser.c
+@@ -180,7 +180,7 @@ int parseRtspMessage(PRTSP_MESSAGE msg, char* rtspMessage, int length) {
+     }
+ 
+     // Put the raw message into a string we can use
+-    char* messageBuffer = malloc(length + 1);
++    char* messageBuffer = (char *)malloc(length + 1);
+     if (messageBuffer == NULL) {
+         exitCode = RTSP_ERROR_NO_MEMORY;
+         goto ExitFailure;
+@@ -454,7 +454,7 @@ char* serializeRtspMessage(PRTSP_MESSAGE msg, int* serializedLength) {
+     POPTION_ITEM current = msg->options;
+     char statusCodeStr[16];
+ 
+-    serializedMessage = malloc(size);
++    serializedMessage = (char *)malloc(size);
+     if (serializedMessage == NULL) {
+         return NULL;
+     }
+diff --git a/src/SdpGenerator.c b/src/SdpGenerator.c
+index 22467c0..1e7600e 100644
+--- a/src/SdpGenerator.c
++++ b/src/SdpGenerator.c
+@@ -87,7 +87,7 @@ static int fillSerializedAttributeList(char* buffer, size_t length, PSDP_OPTION
+ static int addAttributeBinary(PSDP_OPTION* head, char* name, const void* payload, int payloadLen) {
+     PSDP_OPTION option, currentOption;
+ 
+-    option = malloc(sizeof(*option) + payloadLen);
++    option = (PSDP_OPTION)malloc(sizeof(*option) + payloadLen);
+     if (option == NULL) {
+         return -1;
+     }
+@@ -579,7 +579,7 @@ char* getSdpPayloadForStreamConfig(int rtspClientVersion, int* length) {
+     }
+ 
+     attributeListSize = getSerializedAttributeListSize(attributeList);
+-    payload = malloc(MAX_SDP_HEADER_LEN + MAX_SDP_TAIL_LEN + attributeListSize);
++    payload = (char *)malloc(MAX_SDP_HEADER_LEN + MAX_SDP_TAIL_LEN + attributeListSize);
+     if (payload == NULL) {
+         freeAttributeList(attributeList);
+         return NULL;
+diff --git a/src/VideoDepacketizer.c b/src/VideoDepacketizer.c
+index 5baa1d5..9068c60 100644
+--- a/src/VideoDepacketizer.c
++++ b/src/VideoDepacketizer.c
+@@ -284,7 +284,7 @@ void LiWakeWaitForVideoFrame(void) {
+ 
+ // Cleanup a decode unit by freeing the buffer chain and the holder
+ void LiCompleteVideoFrame(VIDEO_FRAME_HANDLE handle, int drStatus) {
+-    PQUEUED_DECODE_UNIT qdu = handle;
++    PQUEUED_DECODE_UNIT qdu = (PQUEUED_DECODE_UNIT)handle;
+     PLENTRY_INTERNAL lastEntry;
+ 
+     if (drStatus == DR_NEED_IDR) {

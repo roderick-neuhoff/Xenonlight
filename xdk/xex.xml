@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!-- imagexex settings for moonlight.xex (see xdk/build.py). -->
+<xex>
+  <!-- Plain TCP/UDP to the PC instead of Xbox Live's secure sockets. -->
+  <privilege id="6"/> <!-- InsecureSockets -->
+</xex>

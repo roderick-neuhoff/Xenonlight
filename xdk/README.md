@@ -63,6 +63,9 @@ rumble confirms it, and holding Start again switches back (short rumble). The le
 the pointer, the right stick scrolls, **A / B / X** are the left / right / middle buttons and
 **LB / RB** are back / forward. The game sees Start held for that second, as in Moonlight-qt.
 
+**Keyboard:** a USB keyboard plugged into the console types on the PC during a stream (US
+layout key codes, with Shift/Ctrl/Alt). The menus still use the controller.
+
 ## Settings
 
 Besides the shared ones (resolution, FPS, bitrate, V-Sync, audio; see the main

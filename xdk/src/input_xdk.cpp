@@ -1,5 +1,6 @@
 /*
- * Controllers through XInput: wired and wireless pads, up to four.
+ * Controllers through XInput: wired and wireless pads, up to four, plus USB
+ * keyboards during a stream.
  *
  * Mouse mode (as in Moonlight-qt): holding Start alone for a second switches
  * a pad between controller and mouse, confirmed by a short rumble. In mouse
@@ -224,6 +225,32 @@ static void mouse_send(struct mouse_pad *m, const struct pad *p, float dt)
         LiSendHighResHScrollEvent((short)h);
 }
 
+/* ------------------------------------------------------------ keyboard */
+
+/* USB keyboards through XInput's keystroke queue. Its virtual-key codes are the Windows ones
+ * Moonlight sends (as 0x8000 | VK, like Moonlight-qt); key repeat is left to the host. */
+static void keyboard_send(void)
+{
+    XINPUT_KEYSTROKE k;
+    int n;
+
+    for (n = 0; n < 32 && XInputGetKeystroke(XUSER_INDEX_ANY, XINPUT_FLAG_KEYBOARD, &k) == ERROR_SUCCESS; n++) {
+        char mods = 0;
+
+        if (k.VirtualKey == 0 || (k.Flags & XINPUT_KEYSTROKE_REPEAT) ||
+            !(k.Flags & (XINPUT_KEYSTROKE_KEYDOWN | XINPUT_KEYSTROKE_KEYUP)))
+            continue;
+        if (k.Flags & XINPUT_KEYSTROKE_SHIFT)
+            mods |= MODIFIER_SHIFT;
+        if (k.Flags & XINPUT_KEYSTROKE_CTRL)
+            mods |= MODIFIER_CTRL;
+        if (k.Flags & (XINPUT_KEYSTROKE_ALT | XINPUT_KEYSTROKE_ALTGR))
+            mods |= MODIFIER_ALT;
+        LiSendKeyboardEvent((short)(0x8000 | (k.VirtualKey & 0xFF)),
+                            (k.Flags & XINPUT_KEYSTROKE_KEYDOWN) ? KEY_ACTION_DOWN : KEY_ACTION_UP, mods);
+    }
+}
+
 /* ------------------------------------------------------------ streaming */
 
 static DWORD WINAPI input_stream_main(LPVOID arg)
@@ -280,6 +307,7 @@ static DWORD WINAPI input_stream_main(LPVOID arg)
                 last[i] = *p;
             }
         }
+        keyboard_send();
         Sleep(SEND_INTERVAL_MS);
     }
     return 0;

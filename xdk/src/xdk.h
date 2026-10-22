@@ -28,10 +28,19 @@ bool gfx_init(void);
 D3DDevice *gfx_begin(void);
 void gfx_end(void);
 
-/* Draws a textured rectangle (pixel coordinates) with one of the pixel shaders.
- * The caller sets the textures: RGB uses sampler 0, YUV uses 0 (Y), 1 (U), 2 (V). */
-enum gfx_shader { GFX_SHADER_RGB, GFX_SHADER_YUV };
+/* Pixel shaders. The caller sets textures and constants:
+ *   RGB      s0 = RGB texture (UI)
+ *   PRESENT  s0 = luma (point), s1/s2 = U/V (bilinear); c0 = luma size, c1.x = sharpening
+ *   DEBLOCK  s0 = luma, s1 = macroblock QPs, s2 = threshold LUT (all point);
+ *            c0 = luma size, c1 = 1/macroblock counts, c2 = edge direction  (xdk/shaders) */
+enum gfx_shader { GFX_SHADER_RGB, GFX_SHADER_PRESENT, GFX_SHADER_DEBLOCK, GFX_SHADER_COUNT };
+
+/* Draws a rectangle (pixel coordinates of the 1280x720 back buffer) with a pixel shader. */
 void gfx_draw_rect(D3DDevice *dev, int shader, float x0, float y0, float x1, float y1);
+/* Covers the whole current render target, whatever its size. */
+void gfx_draw_target(D3DDevice *dev, int shader);
+/* Bilinear or point sampling for a sampler. */
+void gfx_set_filter(D3DDevice *dev, int sampler, bool linear);
 
 /* Copies rows into a locked linear texture. */
 void gfx_upload(D3DTexture *tex, const void *src, int src_pitch, int row_bytes, int rows);

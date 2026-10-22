@@ -23,6 +23,7 @@
 #include "../../src/video.h"
 #include "../../src/ui/ui.h"
 #include "../ffmpeg_xbox/xbox_dsp.h"
+#include "deblock_tables.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -46,9 +47,10 @@ int ptw32_processInitialize(void);
 
 struct staging {
     uint8_t *plane[3];
+    uint8_t *qp;            /* QP of each macroblock, for GPU deblocking */
 };
 
-static struct video_options options = { true, RENDERER_GPU, true };
+static struct video_options options = { true, RENDERER_GPU, true, 1 };
 static struct video_stats stats;
 
 static AVCodecContext *codec_ctx;
@@ -65,8 +67,22 @@ static volatile bool running;
 
 /* Two texture sets: the GPU reads one while the next frame fills the other. */
 static D3DTexture *tex[2][3];
+static D3DTexture *qp_tex[2];
 static DWORD tex_fence[2];
 static int tex_next;
+
+/*
+ * GPU deblocking (when the decoder skips the in-loop filter): two passes over the luma plane
+ * into an EDRAM render target, each resolved into a texture; the presentation shader then reads
+ * the result. The render target may share EDRAM with the back buffer: it's only used before the
+ * back buffer is drawn each frame.
+ */
+static int mb_w, mb_h;
+static bool gpu_deblock;
+static float sharpen;
+static D3DSurface *deblock_rt, *back_buffer;
+static D3DTexture *deblock_tex[2];
+static D3DTexture *lut_tex;
 
 static LARGE_INTEGER qpc_freq;
 
@@ -175,9 +191,43 @@ static void close_h264(AVCodecContext **c)
 
 /* ---------------------------------------------------- render thread */
 
+static void set_constant(D3DDevice *d, int reg, float x, float y, float z, float w)
+{
+    float v[4] = { x, y, z, w };
+    d->SetPixelShaderConstantF(reg, v, 1);
+}
+
+/* Two deblocking passes over the luma texture; returns the filtered texture. */
+static D3DTexture *deblock(D3DDevice *d, D3DTexture *luma, D3DTexture *qp)
+{
+    D3DVIEWPORT9 vp = { 0, 0, (DWORD)vid_w, (DWORD)vid_h, 0.0f, 1.0f };
+    D3DVIEWPORT9 full = { 0, 0, GFX_WIDTH, GFX_HEIGHT, 0.0f, 1.0f };
+    int pass, i;
+
+    d->SetRenderTarget(0, deblock_rt);
+    d->SetViewport(&vp);
+    d->SetTexture(1, qp);
+    d->SetTexture(2, lut_tex);
+    for (i = 0; i < 3; i++)
+        gfx_set_filter(d, i, false);
+    set_constant(d, 0, (float)vid_w, (float)vid_h, 1.0f / vid_w, 1.0f / vid_h);
+    set_constant(d, 1, 1.0f / mb_w, 1.0f / mb_h, 0, 0);
+    for (pass = 0; pass < 2; pass++) {
+        d->SetTexture(0, pass == 0 ? luma : deblock_tex[0]);
+        set_constant(d, 2, pass == 0 ? 1.0f : 0.0f, pass == 0 ? 0.0f : 1.0f, 0, 0);
+        gfx_draw_target(d, GFX_SHADER_DEBLOCK);
+        d->SetTexture(0, NULL);   /* the next resolve may overwrite it */
+        d->Resolve(D3DRESOLVE_RENDERTARGET0, NULL, deblock_tex[pass], NULL, 0, 0, NULL, 1.0f, 0, NULL);
+    }
+    d->SetRenderTarget(0, back_buffer);
+    d->SetViewport(&full);
+    return deblock_tex[1];
+}
+
 static void draw_frame(const struct staging *s)
 {
     D3DDevice *d = gfx_begin();
+    D3DTexture *luma;
     int k = tex_next, i;
 
     tex_next ^= 1;
@@ -186,15 +236,25 @@ static void draw_frame(const struct staging *s)
     gfx_upload(tex[k][0], s->plane[0], vid_w, vid_w, vid_h);
     gfx_upload(tex[k][1], s->plane[1], chroma_w, chroma_w, chroma_h);
     gfx_upload(tex[k][2], s->plane[2], chroma_w, chroma_w, chroma_h);
+    if (gpu_deblock)
+        gfx_upload(qp_tex[k], s->qp, mb_w, mb_w, mb_h);
 
     /* The staging slot can be refilled now. */
     EnterCriticalSection(&mailbox_lock);
     slot_rendering = -1;
     LeaveCriticalSection(&mailbox_lock);
 
-    for (i = 0; i < 3; i++)
-        d->SetTexture(i, tex[k][i]);
-    gfx_draw_rect(d, GFX_SHADER_YUV, 0, 0, GFX_WIDTH, GFX_HEIGHT);
+    luma = gpu_deblock ? deblock(d, tex[k][0], qp_tex[k]) : tex[k][0];
+
+    d->SetTexture(0, luma);
+    d->SetTexture(1, tex[k][1]);
+    d->SetTexture(2, tex[k][2]);
+    gfx_set_filter(d, 0, false);   /* the shader does its own bicubic filtering */
+    gfx_set_filter(d, 1, true);
+    gfx_set_filter(d, 2, true);
+    set_constant(d, 0, (float)vid_w, (float)vid_h, 1.0f / vid_w, 1.0f / vid_h);
+    set_constant(d, 1, sharpen, 0, 0, 0);
+    gfx_draw_rect(d, GFX_SHADER_PRESENT, 0, 0, GFX_WIDTH, GFX_HEIGHT);
     for (i = 0; i < 3; i++)
         d->SetTexture(i, NULL);
     tex_fence[k] = d->InsertFence();
@@ -264,6 +324,12 @@ static void publish(const AVFrame *f)
     copy_plane(slots[s].plane[0], vid_w, vid_h, f->data[0], f->linesize[0]);
     copy_plane(slots[s].plane[1], chroma_w, chroma_h, f->data[1], f->linesize[1]);
     copy_plane(slots[s].plane[2], chroma_w, chroma_h, f->data[2], f->linesize[2]);
+    if (gpu_deblock) {
+        if (f->qscale_table)
+            copy_plane(slots[s].qp, mb_w, mb_h, (const uint8_t *)f->qscale_table, f->qstride);
+        else
+            memset(slots[s].qp, 26, mb_w * mb_h);   /* a typical streaming QP */
+    }
 
     EnterCriticalSection(&mailbox_lock);
     slot_pending = s;
@@ -332,6 +398,55 @@ static void capture_finish(void)
     cap_buf = NULL;
 }
 
+/* ---------------------------------------------------- GPU picture filters */
+
+/* Creates what GPU deblocking needs; without it (or with the in-loop filter on) frames are
+ * presented directly. Called with the device held. */
+static void setup_gpu_filters(D3DDevice *d)
+{
+    D3DSURFACE_PARAMETERS sp;
+    D3DLOCKED_RECT lr;
+    bool ok = true;
+    int i, q;
+
+    sharpen = options.gpu_filter >= 2 ? 0.5f : 0.0f;
+    gpu_deblock = false;
+    if (!options.fast_decode || options.gpu_filter < 1)
+        return;   /* the decoder deblocks already, or the user turned it off */
+
+    mb_w = (vid_w + 15) / 16;
+    mb_h = (vid_h + 15) / 16;
+    for (i = 0; i < FRAME_SLOTS; i++) {
+        slots[i].qp = (uint8_t *)malloc(mb_w * mb_h);
+        ok = ok && slots[i].qp;
+    }
+    for (i = 0; i < 2 && ok; i++)
+        ok = SUCCEEDED(d->CreateTexture(mb_w, mb_h, 1, 0, D3DFMT_LIN_L8, 0, &qp_tex[i], NULL)) &&
+             SUCCEEDED(d->CreateTexture(vid_w, vid_h, 1, 0, D3DFMT_A8R8G8B8, 0, &deblock_tex[i], NULL));
+
+    if (ok && lut_tex == NULL) {
+        /* 64x1 lookup: alpha, beta, tc0 (bS 1), tc0 (bS 2) for QP 0..51 */
+        ok = SUCCEEDED(d->CreateTexture(64, 1, 1, 0, D3DFMT_LIN_A8R8G8B8, 0, &lut_tex, NULL)) &&
+             SUCCEEDED(lut_tex->LockRect(0, &lr, NULL, 0));
+        if (ok) {
+            uint32_t *px = (uint32_t *)lr.pBits;
+            for (q = 0; q < 64; q++) {
+                const unsigned char *e = deblock_lut[q < 52 ? q : 51];
+                px[q] = ((uint32_t)e[3] << 24) | ((uint32_t)e[0] << 16) | ((uint32_t)e[1] << 8) | e[2];
+            }
+            lut_tex->UnlockRect(0);
+        }
+    }
+
+    /* At EDRAM offset 0: 1080p needs 8 MB of the 10 MB. */
+    memset(&sp, 0, sizeof(sp));
+    ok = ok && SUCCEEDED(d->CreateRenderTarget(vid_w, vid_h, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE,
+                                               &deblock_rt, &sp)) &&
+         SUCCEEDED(d->GetRenderTarget(0, &back_buffer));
+    gpu_deblock = ok;
+    vlog("video: GPU deblocking %s, sharpening %.1f\n", ok ? "on" : "unavailable", sharpen);
+}
+
 /* ---------------------------------------------------- Moonlight callbacks */
 
 static void free_resources(void)
@@ -343,11 +458,14 @@ static void free_resources(void)
         avcodec_free_frame(&dec_frame);
     free(pkt_buf);
     pkt_buf = NULL;
-    for (i = 0; i < FRAME_SLOTS; i++)
+    for (i = 0; i < FRAME_SLOTS; i++) {
         for (k = 0; k < 3; k++) {
             free(slots[i].plane[k]);
             slots[i].plane[k] = NULL;
         }
+        free(slots[i].qp);
+        slots[i].qp = NULL;
+    }
     gfx_begin();
     for (i = 0; i < 2; i++) {
         for (k = 0; k < 3; k++) {
@@ -355,8 +473,19 @@ static void free_resources(void)
                 tex[i][k]->Release();
             tex[i][k] = NULL;
         }
+        if (qp_tex[i])
+            qp_tex[i]->Release();
+        if (deblock_tex[i])
+            deblock_tex[i]->Release();
+        qp_tex[i] = deblock_tex[i] = NULL;
         tex_fence[i] = 0;
     }
+    if (deblock_rt)
+        deblock_rt->Release();
+    if (back_buffer)
+        back_buffer->Release();
+    deblock_rt = back_buffer = NULL;
+    gpu_deblock = false;
     gfx_end();
 }
 
@@ -408,6 +537,8 @@ static int video_setup(int format, int width, int height, int fps, void *ctx, in
         for (k = 0; k < 3 && ok; k++)
             ok = SUCCEEDED(d->CreateTexture(k ? chroma_w : vid_w, k ? chroma_h : vid_h, 1, 0, D3DFMT_LIN_L8, 0,
                                             &tex[i][k], NULL));
+    if (ok)
+        setup_gpu_filters(d);
     gfx_end();
     if (!ok || pkt_buf == NULL) {
         vlog("video: out of memory for buffers/textures\n");

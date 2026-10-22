@@ -15,6 +15,7 @@ struct video_options {
     bool fast_decode;   /* skip the H.264 deblocking filter (big speedup) */
     int renderer;       /* enum video_renderer */
     bool vsync;         /* GPU renderer: flip on vertical blank (no tearing) */
+    int gpu_filter;     /* SDK build: 0 off, 1 GPU deblocking, 2 deblocking + sharpening */
 };
 
 const char *video_renderer_name(int renderer);

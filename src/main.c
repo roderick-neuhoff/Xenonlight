@@ -123,6 +123,11 @@ bool plat_has_renderer_choice(void)
     return true;
 }
 
+bool plat_has_gpu_filter(void)
+{
+    return false;
+}
+
 void plat_log(const char *line)
 {
     (void)line;   /* the UI owns the screen; no console to print to */

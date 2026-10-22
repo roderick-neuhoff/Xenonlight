@@ -556,7 +556,8 @@ void ui_draw_apps(const struct ui_host *host, const struct ui_app *apps, int n, 
 void ui_draw_settings(const struct ui_setting *rows, int n, int sel)
 {
     static const struct hint hints[] = { { "\xE2\x86\x90 \xE2\x86\x92", "Change" }, { "B", "Save & back" } };
-    float x = 64, y = 150, w = W - 128, rh = 50;
+    /* Tighter rows when there are many, so the help text stays clear of the footer. */
+    float x = 64, y = 150, w = W - 128, rh = n > 8 ? 44.0f : 50.0f;
     int i;
 
     begin_frame();

@@ -224,7 +224,10 @@ static bool edit_ip(char *ip, size_t len)
 
 static const int resolutions[][2] = { { 854, 480 }, { 1280, 720 }, { 1920, 1080 } };
 
-enum { SET_RES, SET_FPS, SET_BITRATE, SET_FAST, SET_RENDERER, SET_VSYNC, SET_SOPS, SET_AUDIO, SET_BENCH, SET_COUNT };
+enum { SET_RES, SET_FPS, SET_BITRATE, SET_FAST, SET_RENDERER, SET_VSYNC, SET_GPU, SET_SOPS, SET_AUDIO, SET_BENCH,
+       SET_COUNT };
+
+static const char *gpu_filter_names[3] = { "Off", "Deblock", "Deblock + sharpen" };
 
 static void settings_menu(void)
 {
@@ -232,7 +235,7 @@ static void settings_menu(void)
 
     for (;;) {
         static const char *labels[SET_COUNT] = {
-            "Resolution", "Frame rate", "Bitrate", "Fast decode", "Renderer", "V-Sync",
+            "Resolution", "Frame rate", "Bitrate", "Fast decode", "Renderer", "V-Sync", "GPU picture",
             "Optimize game settings", "Play audio on PC", "Decoder benchmark",
         };
         static const char *helps[SET_COUNT] = {
@@ -244,6 +247,8 @@ static void settings_menu(void)
             "GPU: the Xenos GPU converts and scales each frame (fastest). CPU modes are fallbacks if "
             "the GPU path misbehaves.",
             "Wait for the TV's refresh before showing a frame (no tearing). Off gives slightly lower latency.",
+            "With fast decode, the GPU smooths the block edges the decoder skipped, at no CPU cost. "
+            "Sharpen also crisps up lower resolutions when they're scaled to the TV.",
             "Lets the host change its resolution and game settings to match the stream.",
             "Also play the game's audio on the host PC's speakers.",
             "Decodes the recording of your first stream with and without the console's vector "
@@ -264,6 +269,7 @@ static void settings_menu(void)
         snprintf(val[SET_RENDERER], 48, "%s", cfg.renderer == RENDERER_GPU ? "GPU" :
                  cfg.renderer == RENDERER_CPU ? "CPU" : "CPU + colour matrix");
         snprintf(val[SET_VSYNC], 48, "%s", cfg.vsync ? "On" : "Off");
+        snprintf(val[SET_GPU], 48, "%s", gpu_filter_names[cfg.gpu_filter >= 0 && cfg.gpu_filter <= 2 ? cfg.gpu_filter : 1]);
         snprintf(val[SET_SOPS], 48, "%s", cfg.sops ? "On" : "Off");
         snprintf(val[SET_AUDIO], 48, "%s", cfg.local_audio ? "On" : "Off");
         snprintf(val[SET_BENCH], 48, "Press A");
@@ -272,6 +278,8 @@ static void settings_menu(void)
             if (i == SET_RENDERER && !plat_has_renderer_choice())
                 continue;
             if (i == SET_BENCH && !plat_benchmark_available())
+                continue;
+            if (i == SET_GPU && !plat_has_gpu_filter())
                 continue;
             rows[n].label = labels[i];
             rows[n].value = val[i];
@@ -304,6 +312,7 @@ static void settings_menu(void)
             case SET_FAST: cfg.fast_decode = !cfg.fast_decode; break;
             case SET_RENDERER: cfg.renderer = (cfg.renderer + d + RENDERER_COUNT) % RENDERER_COUNT; break;
             case SET_VSYNC: cfg.vsync = !cfg.vsync; break;
+            case SET_GPU: cfg.gpu_filter = (cfg.gpu_filter + d + 3) % 3; break;
             case SET_SOPS: cfg.sops = !cfg.sops; break;
             case SET_AUDIO: cfg.local_audio = !cfg.local_audio; break;
             case SET_BENCH:
@@ -507,6 +516,7 @@ static void stream(int app_id, const char *app_title)
     vo.fast_decode = cfg.fast_decode;
     vo.renderer = cfg.renderer;
     vo.vsync = cfg.vsync;
+    vo.gpu_filter = cfg.gpu_filter;
     video_set_options(&vo);
     video_init_callbacks(&dr);
     audio_init_callbacks(&ar);

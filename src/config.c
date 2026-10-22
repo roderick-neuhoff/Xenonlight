@@ -15,6 +15,7 @@ void config_defaults(struct config *c)
     c->fast_decode = true;
     c->renderer = 0;
     c->vsync = true;
+    c->gpu_filter = 1;
     c->sops = true;
     c->local_audio = false;
 }
@@ -72,6 +73,8 @@ void config_load(struct config *c)
         }
         else if (!strcmp(line, "vsync"))
             c->vsync = atoi(eq + 1) != 0;
+        else if (!strcmp(line, "gpu_filter"))
+            c->gpu_filter = atoi(eq + 1);
         else if (!strcmp(line, "sops"))
             c->sops = atoi(eq + 1) != 0;
         else if (!strcmp(line, "local_audio"))
@@ -98,10 +101,12 @@ bool config_save(const struct config *c)
         "renderer=%s\n"
         "# GPU renderer: wait for vertical blank before showing a frame (no tearing)\n"
         "vsync=%d\n"
+        "# Dashboard version: 0 off, 1 GPU deblocking, 2 deblocking + sharpening\n"
+        "gpu_filter=%d\n"
         "sops=%d\n"
         "local_audio=%d\n",
         c->host, c->width, c->height, c->fps, c->bitrate_kbps, c->packet_size,
         c->fast_decode, c->renderer == 1 ? "cpu" : c->renderer == 2 ? "cpu_hwcolor" : "gpu",
-        c->vsync, c->sops, c->local_audio);
+        c->vsync, c->gpu_filter, c->sops, c->local_audio);
     return storage_write("moonlight.ini", buf, (size_t)n);
 }

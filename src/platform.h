@@ -38,6 +38,9 @@ void plat_fixup_config(struct config *cfg);
 /* Whether the "Renderer" setting means anything on this build. */
 bool plat_has_renderer_choice(void);
 
+/* Whether the "GPU picture" setting (GPU deblocking/sharpening) exists on this build. */
+bool plat_has_gpu_filter(void);
+
 /* One line of debug output. The SDK build broadcasts it on the LAN (UDP port
  * 47555, see xdk/scripts/log_listener.py); libxenon drops it. */
 void plat_log(const char *line);

@@ -97,6 +97,11 @@ bool plat_has_renderer_choice(void)
     return false;
 }
 
+bool plat_has_gpu_filter(void)
+{
+    return true;
+}
+
 /* Debug log: each line is broadcast as one UDP datagram to port 47555 on the
  * LAN, so xdk/scripts/log_listener.py on the PC can show it live. */
 #define LOG_PORT 47555

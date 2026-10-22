@@ -663,6 +663,7 @@ static const struct {
 
 struct bench {
     uint8_t *data;              /* capture file */
+    size_t len;
     uint32_t w, h, frames;
     uint32_t *ref_hash;         /* per frame, from the first (C) run */
     volatile int run;           /* configuration in progress */
@@ -696,7 +697,7 @@ static void bench_run(struct bench *b, int run)
     AVCodecContext *c;
     AVFrame *frame = avcodec_alloc_frame();
     uint8_t *buf = (uint8_t *)malloc(2 * 1024 * 1024 + FF_INPUT_BUFFER_PADDING_SIZE);
-    const uint8_t *p = b->data + 16;
+    const uint8_t *p = b->data + 16, *end = b->data + b->len;
     uint64_t total = 0, worst = 0;
     uint32_t i, out = 0;
 
@@ -717,8 +718,10 @@ static void bench_run(struct bench *b, int run)
         int got = 0;
 
         b->frame = i;
+        if (end - p < 4)
+            break;   /* truncated recording */
         memcpy(&len, p, 4);
-        if (len > 2 * 1024 * 1024)
+        if (len > 2 * 1024 * 1024 || len > (uint32_t)(end - p - 4))
             break;
         memcpy(buf, p + 4, len);
         memset(buf + len, 0, FF_INPUT_BUFFER_PADDING_SIZE);
@@ -733,8 +736,8 @@ static void bench_run(struct bench *b, int run)
         total += dt;
         if (dt > worst)
             worst = dt;
-        if (got) {
-            uint32_t hsh = frame_hash(frame, b->w, b->h);
+        if (got && out < b->frames) {
+            uint32_t hsh = frame_hash(frame, frame->width, frame->height);
             if (run == 0)
                 b->ref_hash[out] = hsh;
             else if (hsh != b->ref_hash[out])
@@ -743,7 +746,7 @@ static void bench_run(struct bench *b, int run)
         }
     }
     b->decoded[run] = out;
-    b->ms[run] = b->frames ? total / 1000.0 / b->frames : 0;
+    b->ms[run] = i ? total / 1000.0 / i : 0;
     b->worst_ms[run] = worst / 1000.0;
     vlog("bench: %-28s %6.2f ms/frame (worst %6.2f), %u frames, %u differ from C\n", bench_configs[run].name,
          b->ms[run], b->worst_ms[run], out, b->mismatches[run]);
@@ -799,7 +802,14 @@ void plat_run_benchmark(void)
     memcpy(&b.w, b.data + 4, 4);
     memcpy(&b.h, b.data + 8, 4);
     memcpy(&b.frames, b.data + 12, 4);
+    b.len = len;
+    if (b.frames > CAPTURE_FRAMES)
+        b.frames = CAPTURE_FRAMES;   /* damaged header; the loop also stops at the end of the data */
     b.ref_hash = (uint32_t *)calloc(b.frames + 1, sizeof(uint32_t));
+    if (b.ref_hash == NULL) {
+        free(b.data);
+        return;
+    }
     vlog("bench: %ux%u, %u frames, threads %d\n", b.w, b.h, b.frames, DECODE_THREADS);
 
     th = CreateThread(NULL, 256 * 1024, bench_main, &b, CREATE_SUSPENDED, NULL);

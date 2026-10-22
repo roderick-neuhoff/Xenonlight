@@ -81,11 +81,25 @@ void config_load(struct config *c)
             c->local_audio = atoi(eq + 1) != 0;
     }
     free(text);
+
+    /* A hand-edited file shouldn't be able to request something nonsensical. */
+    if (c->width < 320 || c->width > 1920 || c->height < 240 || c->height > 1080) {
+        c->width = 1280;
+        c->height = 720;
+    }
+    if (c->fps < 10 || c->fps > 120)
+        c->fps = 30;
+    if (c->bitrate_kbps < 500 || c->bitrate_kbps > 100000)
+        c->bitrate_kbps = 8000;
+    if (c->packet_size < 256 || c->packet_size > 1500)
+        c->packet_size = 1392;
+    if (c->gpu_filter < 0 || c->gpu_filter > 2)
+        c->gpu_filter = 1;
 }
 
 bool config_save(const struct config *c)
 {
-    char buf[512];
+    char buf[1024];   /* ~400 bytes of text plus the values */
     int n = snprintf(buf, sizeof(buf),
         "# Moonlight for Xbox 360\n"
         "host=%s\n"
@@ -108,5 +122,7 @@ bool config_save(const struct config *c)
         c->host, c->width, c->height, c->fps, c->bitrate_kbps, c->packet_size,
         c->fast_decode, c->renderer == 1 ? "cpu" : c->renderer == 2 ? "cpu_hwcolor" : "gpu",
         c->vsync, c->gpu_filter, c->sops, c->local_audio);
+    if (n < 0 || n >= (int)sizeof(buf))
+        return false;   /* never write a truncated file */
     return storage_write("moonlight.ini", buf, (size_t)n);
 }

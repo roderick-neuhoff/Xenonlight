@@ -96,6 +96,17 @@ Besides the shared ones (resolution, FPS, bitrate, V-Sync, audio; see the main
 
   In every mode the picture is scaled to the TV with a bicubic (Catmull-Rom) filter. With
   *Fast decode* off the decoder deblocks exactly, so GPU deblocking is skipped.
+- **Decoder threads** (4, 5 or 6; default 5): the host splits each frame into this many slices,
+  and that many FFmpeg threads decode them at once. FFmpeg runs one slice per thread per batch,
+  so slices and threads always match.
+  - Worker *i* runs on hardware thread (*i* + 1) mod 6.
+  - 4 threads use hardware threads 1–4.
+  - 5 adds thread 5, which otherwise only presents frames and mixes audio. The presenter
+    runs at a higher priority, so frames don't wait.
+  - 6 also uses thread 0, which runs the network, audio decoding and the decoder thread
+    itself (idle while the workers run). It may be faster, or it may stutter.
+
+  Compare them with the performance overlay, or with the benchmark (see below).
 - **Audio**: *Stereo* (default) or *5.1 surround*. The console's audio output is always 5.1
   and the dashboard's audio settings mix it down for stereo TVs, so surround needs a
   receiver over HDMI or optical. Decoding 5.1 costs somewhat more CPU time than stereo.
@@ -106,6 +117,9 @@ Besides the shared ones (resolution, FPS, bitrate, V-Sync, audio; see the main
   compensation, prefetch, inverse transform, then all together), and shows the average
   decode time per frame. Every run is compared with the plain C pictures, and
   *(picture differs!)* would mean a bug in the vector code.
+  If the recording has enough slices, it also times the other *Decoder threads* values.
+  A recording made with fewer slices than the setting can't show the gain from the extra
+  threads; the results screen then says to delete `capture.bin` and stream again.
 
 ## Vector (VMX) decoding
 

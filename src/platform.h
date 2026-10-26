@@ -41,6 +41,10 @@ bool plat_has_renderer_choice(void);
 /* Whether the "GPU picture" setting (GPU deblocking/sharpening) exists on this build. */
 bool plat_has_gpu_filter(void);
 
+/* Whether the "Decoder threads" setting exists on this build (the libxenon
+ * build's thread layout is fixed). */
+bool plat_has_thread_choice(void);
+
 /* One line of debug output. The SDK build broadcasts it on the LAN (UDP port
  * 47555, see xdk/scripts/log_listener.py); libxenon drops it. */
 void plat_log(const char *line);

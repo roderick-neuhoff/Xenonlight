@@ -128,6 +128,11 @@ bool plat_has_gpu_filter(void)
     return false;
 }
 
+bool plat_has_thread_choice(void)
+{
+    return false;
+}
+
 void plat_log(const char *line)
 {
     (void)line;   /* the UI owns the screen; no console to print to */

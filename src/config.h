@@ -17,6 +17,7 @@ struct config {
     bool local_audio;   /* also play audio on the host PC */
     bool overlay;       /* SDK build: performance overlay on when a stream starts */
     bool surround;      /* SDK build: ask for 5.1 audio */
+    int decode_threads; /* SDK build: slices per frame and FFmpeg slice threads, 4-6 */
 };
 
 /* Finds a writable USB/HDD device and creates <dev>:/moonlight/. */

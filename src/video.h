@@ -31,5 +31,12 @@ struct video_stats {
     int display_w, display_h;
     int decode_threads;     /* FFmpeg threads actually active */
     int renderer;           /* renderer actually used */
+    uint32_t received_bytes;    /* H.264 data received; wraps, so only use differences */
 };
 void video_get_stats(struct video_stats *out);
+
+/* Performance overlay (SDK build): an opaque ARGB image shown, slightly
+ * translucent, in the top-left corner over the video. px == NULL hides it.
+ * The pixels are copied. video_has_overlay() is false where it's missing. */
+bool video_has_overlay(void);
+void video_set_overlay(const uint32_t *px, int w, int h);

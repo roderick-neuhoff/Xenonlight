@@ -142,6 +142,43 @@ int main(int argc, char **argv)
         items[5].subtitle = "Send Wake-on-LAN to 2c:f0:5d:12:34:56 (Y checks again)";
         items[5].icon = ICON_POWER;
         ui_draw_main(&off, items, 7, 5, "192.168.1.99", 0); shot("13_wake");
+    }
+    {
+        /* The dashboard build's 10 settings, with the longest help text selected. */
+        struct ui_setting all[10];
+        int i;
+        for (i = 0; i < 8; i++)
+            all[i] = settings[i];
+        all[4].label = "GPU picture";
+        all[4].value = "Deblock";
+        all[8].label = "Performance overlay";
+        all[8].value = "Off";
+        all[8].help = "Shows decode time, frame rate, bitrate and network round trip over the stream from the "
+                      "start. Back + LB + RB + X shows or hides it at any time.";
+        all[9].label = "Decoder benchmark";
+        all[9].value = "Press A";
+        all[9].help = NULL;
+        ui_draw_settings(all, 10, 8); shot("14_settings_10");
+    }
+    {
+        /* Overlay over a stand-in frame, blended at 0.85 like GFX_SHADER_OVERLAY. */
+        struct ui_overlay_row rows[7] = {
+            { "Frames received / shown", "30.0 / 29.6 FPS", 0 }, { "Decode time", "28.4 ms of 33.3", 1 },
+            { "Render time", "2.1 ms", 0 }, { "Bitrate", "7.8 Mbps", 0 },
+            { "Dropped (decoder behind)", "2 (14 total)", 1 }, { "Lost packets (unfixable)", "0", 0 },
+            { "Network round trip", "4 ms \xC2\xB1 1", 0 },
+        };
+        canvas_t ov, *c = ui_canvas();
+        int ow, oh, x, y;
+        ui_overlay_size(7, &ow, &oh);
+        cv_init(&ov, ow, oh);
+        ui_draw_overlay(&ov, rows, 7);
+        ui_draw_busy("A game", "pretend this is the video", 0);
+        for (y = 0; y < oh; y++)
+            for (x = 0; x < ow; x++)
+                c->px[(36 + y) * c->w + 48 + x] = cv_mix(c->px[(36 + y) * c->w + 48 + x], ov.px[y * ow + x], 217);
+        shot("15_overlay");
+        cv_free(&ov);
         ui_draw_busy("Searching for PCs running Sunshine", "Checked 120 of 253 addresses \xC2\xB7 found 1", 500); shot("12_search");
     }
     return 0;

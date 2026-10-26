@@ -315,7 +315,7 @@ static bool edit_ip(char *ip, size_t len)
 
 static const int resolutions[][2] = { { 854, 480 }, { 1280, 720 }, { 1920, 1080 } };
 
-enum { SET_RES, SET_FPS, SET_BITRATE, SET_FAST, SET_RENDERER, SET_VSYNC, SET_GPU, SET_SOPS, SET_AUDIO, SET_BENCH,
+enum { SET_RES, SET_FPS, SET_BITRATE, SET_FAST, SET_RENDERER, SET_VSYNC, SET_GPU, SET_SOPS, SET_AUDIO, SET_OVERLAY, SET_BENCH,
        SET_COUNT };
 
 static const char *gpu_filter_names[3] = { "Off", "Deblock", "Deblock + sharpen" };
@@ -327,7 +327,7 @@ static void settings_menu(void)
     for (;;) {
         static const char *labels[SET_COUNT] = {
             "Resolution", "Frame rate", "Bitrate", "Fast decode", "Renderer", "V-Sync", "GPU picture",
-            "Optimize game settings", "Play audio on PC", "Decoder benchmark",
+            "Optimize game settings", "Play audio on PC", "Performance overlay", "Decoder benchmark",
         };
         static const char *helps[SET_COUNT] = {
             "The host renders and encodes at this size. 854x480 decodes about twice as fast as "
@@ -342,6 +342,8 @@ static void settings_menu(void)
             "Sharpen also crisps up lower resolutions when they're scaled to the TV.",
             "Lets the host change its resolution and game settings to match the stream.",
             "Also play the game's audio on the host PC's speakers.",
+            "Shows decode time, frame rate, bitrate and network round trip over the stream from the start. "
+            "Back + LB + RB + X shows or hides it at any time.",
             "Decodes the recording of your first stream with and without the console's vector "
             "unit and shows the time per frame. Takes about a minute.",
         };
@@ -363,6 +365,7 @@ static void settings_menu(void)
         snprintf(val[SET_GPU], 48, "%s", gpu_filter_names[cfg.gpu_filter >= 0 && cfg.gpu_filter <= 2 ? cfg.gpu_filter : 1]);
         snprintf(val[SET_SOPS], 48, "%s", cfg.sops ? "On" : "Off");
         snprintf(val[SET_AUDIO], 48, "%s", cfg.local_audio ? "On" : "Off");
+        snprintf(val[SET_OVERLAY], 48, "%s", cfg.overlay ? "On" : "Off");
         snprintf(val[SET_BENCH], 48, "Press A");
 
         for (i = 0; i < SET_COUNT; i++) {
@@ -371,6 +374,8 @@ static void settings_menu(void)
             if (i == SET_BENCH && !plat_benchmark_available())
                 continue;
             if (i == SET_GPU && !plat_has_gpu_filter())
+                continue;
+            if (i == SET_OVERLAY && !video_has_overlay())
                 continue;
             rows[n].label = labels[i];
             rows[n].value = val[i];
@@ -406,6 +411,7 @@ static void settings_menu(void)
             case SET_GPU: cfg.gpu_filter = (cfg.gpu_filter + d + 3) % 3; break;
             case SET_SOPS: cfg.sops = !cfg.sops; break;
             case SET_AUDIO: cfg.local_audio = !cfg.local_audio; break;
+            case SET_OVERLAY: cfg.overlay = !cfg.overlay; break;
             case SET_BENCH:
                 if (b & A_FLAG)
                     plat_run_benchmark();
@@ -562,6 +568,123 @@ static void show_stream_stats(void)
         ;
 }
 
+/* ------------------------------------------------------------ performance overlay */
+
+#define OVERLAY_ROWS        7
+#define OVERLAY_INTERVAL_MS 500
+
+struct overlay {
+    bool on;
+    int toggles;                /* input_overlay_toggles() already handled */
+    uint32_t last_ms;
+    struct video_stats last;
+    uint32_t last_fec_failed;
+    canvas_t cv;
+};
+
+static uint32_t video_fec_failed(void)
+{
+    const RTP_VIDEO_STATS *rs = LiGetRTPVideoStats();
+    return rs ? rs->packetCountFecFailed : 0;
+}
+
+static void overlay_draw(struct overlay *o)
+{
+    struct ui_overlay_row rows[OVERLAY_ROWS];
+    struct video_stats vs;
+    uint32_t now = plat_now_ms(), dt = now - o->last_ms, rtt, rtt_var, fec_failed = video_fec_failed();
+    float budget = 1000.0f / cfg.fps, decode_ms, shown_fps;
+    int n = 0;
+
+    video_get_stats(&vs);
+    if (dt == 0)
+        dt = 1;
+    decode_ms = vs.avg_decode_us / 1000.0f;
+    shown_fps = (vs.rendered - o->last.rendered) * 1000.0f / dt;
+
+    rows[n].label = "Frames received / shown";
+    snprintf(rows[n].value, 48, "%.1f / %.1f FPS", (vs.received - o->last.received) * 1000.0f / dt, shown_fps);
+    rows[n++].level = shown_fps < cfg.fps * 0.9f ? 1 : 0;
+    rows[n].label = "Decode time";
+    snprintf(rows[n].value, 48, "%.1f ms of %.1f", decode_ms, budget);
+    rows[n++].level = decode_ms > budget ? 2 : decode_ms > budget * 0.8f ? 1 : 0;
+    rows[n].label = "Render time";
+    snprintf(rows[n].value, 48, "%.1f ms", vs.avg_render_us / 1000.0f);
+    rows[n++].level = 0;
+    rows[n].label = "Bitrate";
+    snprintf(rows[n].value, 48, "%.1f Mbps", (vs.received_bytes - o->last.received_bytes) * 8.0f / 1000.0f / dt);
+    rows[n++].level = 0;
+    rows[n].label = "Dropped (decoder behind)";
+    snprintf(rows[n].value, 48, "%u (%u total)", vs.dropped - o->last.dropped, vs.dropped);
+    rows[n++].level = vs.dropped != o->last.dropped ? 1 : 0;
+    rows[n].label = "Lost packets (unfixable)";
+    snprintf(rows[n].value, 48, "%u", fec_failed - o->last_fec_failed);
+    rows[n++].level = fec_failed != o->last_fec_failed ? 1 : 0;
+    rows[n].label = "Network round trip";
+    if (LiGetEstimatedRttInfo(&rtt, &rtt_var))
+        snprintf(rows[n].value, 48, "%u ms \xC2\xB1 %u", rtt, rtt_var);
+    else
+        snprintf(rows[n].value, 48, "-");
+    rows[n++].level = 0;
+
+    ui_draw_overlay(&o->cv, rows, n);
+    video_set_overlay(o->cv.px, o->cv.w, o->cv.h);
+    o->last = vs;
+    o->last_fec_failed = fec_failed;
+    o->last_ms = now;
+}
+
+static void overlay_begin(struct overlay *o)
+{
+    int w, h;
+
+    memset(o, 0, sizeof(*o));
+    if (!video_has_overlay())
+        return;
+    ui_overlay_size(OVERLAY_ROWS, &w, &h);
+    if (!cv_init(&o->cv, w, h)) {
+        cv_free(&o->cv);
+        return;
+    }
+    o->on = cfg.overlay;
+    o->last_ms = plat_now_ms();
+    video_get_stats(&o->last);
+    o->last_fec_failed = video_fec_failed();
+}
+
+/* Called from the stream loop: handles the toggle combo and redraws twice a second. */
+static void overlay_tick(struct overlay *o)
+{
+    int t = input_overlay_toggles();
+
+    if (o->cv.px == NULL)
+        return;
+    if (t != o->toggles) {
+        if ((t - o->toggles) & 1) {
+            o->on = !o->on;
+            if (!o->on)
+                video_set_overlay(NULL, 0, 0);
+        }
+        o->toggles = t;
+    }
+    if (plat_now_ms() - o->last_ms < OVERLAY_INTERVAL_MS)
+        return;
+    if (o->on) {
+        overlay_draw(o);
+    } else {
+        /* Keep the baseline fresh so the rates are right as soon as it's shown. */
+        video_get_stats(&o->last);
+        o->last_fec_failed = video_fec_failed();
+        o->last_ms = plat_now_ms();
+    }
+}
+
+static void overlay_end(struct overlay *o)
+{
+    video_set_overlay(NULL, 0, 0);
+    cv_free(&o->cv);
+}
+
 static void stream(int app_id, const char *app_title)
 {
     struct launch_job lj;
@@ -570,6 +693,7 @@ static void stream(int app_id, const char *app_title)
     DECODER_RENDERER_CALLBACKS dr;
     AUDIO_RENDERER_CALLBACKS ar;
     struct video_options vo;
+    struct overlay ov;
     char title[128], msg[200];
 
     memset(&lj, 0, sizeof(lj));
@@ -632,8 +756,12 @@ static void stream(int app_id, const char *app_title)
     }
 
     input_stream_start();
-    while (!connection_terminated && !input_quit_requested())
+    overlay_begin(&ov);
+    while (!connection_terminated && !input_quit_requested()) {
+        overlay_tick(&ov);
         plat_sleep_ms(50);
+    }
+    overlay_end(&ov);
     input_stream_stop();
     LiStopConnection();
     ui_suspended = false;

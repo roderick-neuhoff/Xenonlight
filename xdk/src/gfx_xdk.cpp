@@ -34,6 +34,11 @@ static const char ps_rgb_src[] =
     "sampler rgb : register(s0);\n"
     "float4 main(float2 uv : TEXCOORD0) : COLOR { return float4(tex2D(rgb, uv).rgb, 1); }\n";
 
+/* The performance overlay: the UI's opaque pixels, blended at a fixed opacity. */
+static const char ps_overlay_src[] =
+    "sampler rgb : register(s0);\n"
+    "float4 main(float2 uv : TEXCOORD0) : COLOR { return float4(tex2D(rgb, uv).rgb, 0.85); }\n";
+
 static ID3DXBuffer *compile(const char *src, const char *profile)
 {
     ID3DXBuffer *code = NULL, *errors = NULL;
@@ -53,7 +58,7 @@ bool gfx_init(void)
         { 0, 8, D3DDECLTYPE_FLOAT2, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_TEXCOORD, 0 },
         D3DDECL_END()
     };
-    const char *ps_src[GFX_SHADER_COUNT] = { ps_rgb_src, shader_present, shader_deblock };
+    const char *ps_src[GFX_SHADER_COUNT] = { ps_rgb_src, shader_present, shader_deblock, ps_overlay_src };
     Direct3D *d3d = Direct3DCreate9(D3D_SDK_VERSION);
     D3DPRESENT_PARAMETERS pp;
     ID3DXBuffer *code;

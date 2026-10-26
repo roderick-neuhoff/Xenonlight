@@ -15,6 +15,7 @@ struct config {
     int gpu_filter;     /* SDK build: 0 off, 1 GPU deblocking, 2 deblocking + sharpening */
     bool sops;          /* let the host change its resolution to match */
     bool local_audio;   /* also play audio on the host PC */
+    bool overlay;       /* SDK build: performance overlay on when a stream starts */
 };
 
 /* Finds a writable USB/HDD device and creates <dev>:/moonlight/. */

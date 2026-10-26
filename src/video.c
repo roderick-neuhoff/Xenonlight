@@ -122,6 +122,18 @@ void video_get_stats(struct video_stats *out)
     *out = stats;
 }
 
+bool video_has_overlay(void)
+{
+    return false;
+}
+
+void video_set_overlay(const uint32_t *px, int w, int h)
+{
+    (void)px;
+    (void)w;
+    (void)h;
+}
+
 static void build_color_luts(void)
 {
     int i;
@@ -618,6 +630,7 @@ static int video_submit(PDECODE_UNIT du)
     int off = 0;
 
     stats.received++;
+    stats.received_bytes += du->fullLength;
 
     if (need_idr) {
         need_idr = 0;

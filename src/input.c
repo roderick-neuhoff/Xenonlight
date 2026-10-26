@@ -167,6 +167,11 @@ bool input_quit_requested(void)
     return quit_requested;
 }
 
+int input_overlay_toggles(void)
+{
+    return 0;   /* this build has no performance overlay (video_has_overlay) */
+}
+
 void input_rumble(unsigned short controller, unsigned short low, unsigned short high)
 {
     if (controller < MAX_PADS)

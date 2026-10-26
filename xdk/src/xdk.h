@@ -32,8 +32,9 @@ void gfx_end(void);
  *   RGB      s0 = RGB texture (UI)
  *   PRESENT  s0 = luma (point), s1/s2 = U/V (bilinear); c0 = luma size, c1.x = sharpening
  *   DEBLOCK  s0 = luma, s1 = macroblock QPs, s2 = threshold LUT (all point);
- *            c0 = luma size, c1 = 1/macroblock counts, c2 = edge direction  (xdk/shaders) */
-enum gfx_shader { GFX_SHADER_RGB, GFX_SHADER_PRESENT, GFX_SHADER_DEBLOCK, GFX_SHADER_COUNT };
+ *            c0 = luma size, c1 = 1/macroblock counts, c2 = edge direction  (xdk/shaders)
+ *   OVERLAY  s0 = RGB texture, output alpha 0.85 (needs alpha blending on) */
+enum gfx_shader { GFX_SHADER_RGB, GFX_SHADER_PRESENT, GFX_SHADER_DEBLOCK, GFX_SHADER_OVERLAY, GFX_SHADER_COUNT };
 
 /* Draws a rectangle (pixel coordinates of the 1280x720 back buffer) with a pixel shader. */
 void gfx_draw_rect(D3DDevice *dev, int shader, float x0, float y0, float x1, float y1);

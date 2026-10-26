@@ -16,11 +16,13 @@
 #include <Limelight.h>
 
 #define QUIT_COMBO (BACK_FLAG | PLAY_FLAG | LB_FLAG | RB_FLAG)
+#define OVERLAY_COMBO (BACK_FLAG | LB_FLAG | RB_FLAG | X_FLAG)
 #define SEND_INTERVAL_MS 4
 
 static int menu_prev;
 static volatile bool stream_active;
 static volatile bool quit_requested;
+static volatile int overlay_toggles;
 static HANDLE stream_thread;
 
 static const struct {
@@ -257,7 +259,7 @@ static DWORD WINAPI input_stream_main(LPVOID arg)
 {
     struct pad pads[MAX_PADS], last[MAX_PADS];
     struct mouse_pad mouse[MAX_PADS];
-    bool announced[MAX_PADS] = { false };
+    bool announced[MAX_PADS] = { false }, overlay_held[MAX_PADS] = { false };
     DWORD prev = GetTickCount();
     int i;
     (void)arg;
@@ -289,6 +291,14 @@ static DWORD WINAPI input_stream_main(LPVOID arg)
                 quit_requested = true;
                 continue;
             }
+            /* The game still sees these buttons, as in Moonlight-qt. */
+            if ((p->buttons & OVERLAY_COMBO) == OVERLAY_COMBO) {
+                if (!overlay_held[i])
+                    overlay_toggles++;
+                overlay_held[i] = true;
+            } else {
+                overlay_held[i] = false;
+            }
             if (mouse_toggle(m, (unsigned short)i, p->buttons, now)) {
                 if (m->on) {
                     /* Release everything on the host's virtual pad (Start is still held). */
@@ -316,6 +326,7 @@ static DWORD WINAPI input_stream_main(LPVOID arg)
 void input_stream_start(void)
 {
     quit_requested = false;
+    overlay_toggles = 0;
     stream_active = true;
     stream_thread = CreateThread(NULL, 64 * 1024, input_stream_main, NULL, 0, NULL);
 }
@@ -339,6 +350,11 @@ void input_stream_stop(void)
 bool input_quit_requested(void)
 {
     return quit_requested;
+}
+
+int input_overlay_toggles(void)
+{
+    return overlay_toggles;
 }
 
 void input_rumble(unsigned short controller, unsigned short low, unsigned short high)

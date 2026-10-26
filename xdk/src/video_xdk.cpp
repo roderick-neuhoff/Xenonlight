@@ -137,6 +137,119 @@ void video_get_stats(struct video_stats *out)
     *out = stats;
 }
 
+/* ---------------------------------------------------- performance overlay */
+
+/* The UI thread hands over pixels; the render thread uploads them into one of
+ * two textures (the GPU may still be reading the other) and blends it over
+ * each frame. */
+#define OVERLAY_X 48   /* inside the TV's title-safe area */
+#define OVERLAY_Y 36
+
+static CRITICAL_SECTION overlay_lock;
+static uint32_t *ov_px;
+static int ov_w, ov_h, ov_cap;
+static bool ov_visible, ov_dirty;
+static D3DTexture *ov_tex[2];
+static int ov_tex_w[2], ov_tex_h[2];
+static DWORD ov_fence[2];
+static int ov_cur = -1;   /* texture holding the current pixels */
+
+bool video_has_overlay(void)
+{
+    return true;
+}
+
+void video_set_overlay(const uint32_t *px, int w, int h)
+{
+    EnterCriticalSection(&overlay_lock);
+    if (px == NULL || w <= 0 || h <= 0) {
+        ov_visible = false;
+    } else {
+        if (w * h > ov_cap) {
+            uint32_t *n = (uint32_t *)realloc(ov_px, (size_t)w * h * 4);
+            if (n == NULL) {
+                LeaveCriticalSection(&overlay_lock);
+                return;
+            }
+            ov_px = n;
+            ov_cap = w * h;
+        }
+        memcpy(ov_px, px, (size_t)w * h * 4);
+        ov_w = w;
+        ov_h = h;
+        ov_visible = ov_dirty = true;
+    }
+    LeaveCriticalSection(&overlay_lock);
+}
+
+/* Render thread, device held, back buffer bound. */
+static void draw_overlay(D3DDevice *d)
+{
+    int w, h;
+
+    EnterCriticalSection(&overlay_lock);
+    if (!ov_visible) {
+        LeaveCriticalSection(&overlay_lock);
+        return;
+    }
+    if (ov_dirty) {
+        int k = ov_cur < 0 ? 0 : ov_cur ^ 1;
+
+        if (ov_fence[k])
+            d->BlockOnFence(ov_fence[k]);
+        if (ov_tex[k] && (ov_tex_w[k] != ov_w || ov_tex_h[k] != ov_h)) {
+            ov_tex[k]->Release();
+            ov_tex[k] = NULL;
+        }
+        if (ov_tex[k] == NULL &&
+            SUCCEEDED(d->CreateTexture(ov_w, ov_h, 1, 0, D3DFMT_LIN_A8R8G8B8, 0, &ov_tex[k], NULL))) {
+            ov_tex_w[k] = ov_w;
+            ov_tex_h[k] = ov_h;
+        }
+        if (ov_tex[k]) {
+            gfx_upload(ov_tex[k], ov_px, ov_w * 4, ov_w * 4, ov_h);
+            ov_cur = k;
+        }
+        ov_dirty = false;
+    }
+    LeaveCriticalSection(&overlay_lock);
+    if (ov_cur < 0)
+        return;
+
+    w = ov_tex_w[ov_cur];
+    h = ov_tex_h[ov_cur];
+    d->SetTexture(0, ov_tex[ov_cur]);
+    gfx_set_filter(d, 0, false);   /* 1:1 pixels */
+    d->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    d->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    d->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+    gfx_draw_rect(d, GFX_SHADER_OVERLAY, (float)OVERLAY_X, (float)OVERLAY_Y, (float)(OVERLAY_X + w),
+                  (float)(OVERLAY_Y + h));
+    d->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    d->SetTexture(0, NULL);
+    ov_fence[ov_cur] = d->InsertFence();
+}
+
+/* With the device held: the textures belong to the stream's lifetime. */
+static void free_overlay(D3DDevice *d)
+{
+    int k;
+
+    for (k = 0; k < 2; k++) {
+        if (ov_tex[k]) {
+            if (ov_fence[k])
+                d->BlockOnFence(ov_fence[k]);
+            ov_tex[k]->Release();
+        }
+        ov_tex[k] = NULL;
+        ov_fence[k] = 0;
+    }
+    ov_cur = -1;
+    EnterCriticalSection(&overlay_lock);
+    ov_dirty = ov_visible;   /* re-upload if it's still meant to show */
+    LeaveCriticalSection(&overlay_lock);
+}
+
 static void selftest_log(const char *line)
 {
     plat_log(line);
@@ -148,6 +261,7 @@ void video_xdk_init(void)
     avcodec_register(&ff_h264_decoder);
     av_log_set_level(AV_LOG_QUIET);
     InitializeCriticalSection(&mailbox_lock);
+    InitializeCriticalSection(&overlay_lock);
     frame_event = CreateEvent(NULL, FALSE, FALSE, NULL);
     QueryPerformanceFrequency(&qpc_freq);
 
@@ -257,6 +371,7 @@ static void draw_frame(const struct staging *s)
     gfx_draw_rect(d, GFX_SHADER_PRESENT, 0, 0, GFX_WIDTH, GFX_HEIGHT);
     for (i = 0; i < 3; i++)
         d->SetTexture(i, NULL);
+    draw_overlay(d);
     tex_fence[k] = d->InsertFence();
     d->Present(NULL, NULL, NULL, NULL);
     gfx_end();
@@ -451,6 +566,7 @@ static void setup_gpu_filters(D3DDevice *d)
 
 static void free_resources(void)
 {
+    D3DDevice *d;
     int i, k;
 
     close_h264(&codec_ctx);
@@ -466,7 +582,8 @@ static void free_resources(void)
         free(slots[i].qp);
         slots[i].qp = NULL;
     }
-    gfx_begin();
+    d = gfx_begin();
+    free_overlay(d);
     for (i = 0; i < 2; i++) {
         for (k = 0; k < 3; k++) {
             if (tex[i][k])
@@ -590,6 +707,7 @@ static int video_submit(PDECODE_UNIT du)
     int off = 0, got = 0, ret;
 
     stats.received++;
+    stats.received_bytes += du->fullLength;
     if (du->fullLength > pkt_cap) {
         uint8_t *n = (uint8_t *)realloc(pkt_buf, du->fullLength + FF_INPUT_BUFFER_PADDING_SIZE);
         if (n == NULL)

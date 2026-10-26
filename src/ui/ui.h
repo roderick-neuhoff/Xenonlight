@@ -48,6 +48,13 @@ struct ui_stat {
     char value[64];
 };
 
+/* One line of the performance overlay; level 0 normal, 1 warning, 2 bad. */
+struct ui_overlay_row {
+    const char *label;
+    char value[48];
+    int level;
+};
+
 bool ui_init(int width, int height);
 canvas_t *ui_canvas(void);
 /* Size that box art should be scaled to before passing it to ui_draw_apps. */
@@ -67,6 +74,11 @@ void ui_draw_pair(const struct ui_host *host, const char *pin, uint32_t t_ms);
 void ui_draw_busy(const char *title, const char *message, uint32_t t_ms);
 void ui_draw_message(int icon, const char *title, const char *text);
 void ui_draw_stats(const char *title, const struct ui_stat *stats, int n, const char *note);
+
+/* Performance overlay, drawn at 1:1 into its own canvas (not the screen):
+ * ui_overlay_size gives the canvas size for n rows. */
+void ui_overlay_size(int n, int *w, int *h);
+void ui_draw_overlay(canvas_t *dst, const struct ui_overlay_row *rows, int n);
 
 /* Platform: shows the canvas on screen (present_xenon.c / the PC preview). */
 void ui_present(void);

@@ -571,7 +571,7 @@ void ui_draw_settings(const struct ui_setting *rows, int n, int sel)
 {
     static const struct hint hints[] = { { "\xE2\x86\x90 \xE2\x86\x92", "Change" }, { "B", "Save & back" } };
     /* Tighter rows when there are many, so the help text stays clear of the footer. */
-    float x = 64, y = 150, w = W - 128, rh = n > 8 ? 44.0f : 50.0f;
+    float x = 64, y = 150, w = W - 128, rh = n > 9 ? 40.0f : n > 8 ? 44.0f : 50.0f;
     int i;
 
     begin_frame();
@@ -589,18 +589,18 @@ void ui_draw_settings(const struct ui_setting *rows, int n, int sel)
         } else if (i > 0) {
             cv_fill(&cv, SI(x + 24), SI(ry), SI(w - 48), 1, WITH_ALPHA(C_BORDER, 200));
         }
-        text(FONT_REGULAR, 19, x + 30, ry + 32, on ? C_TEXT : C_TEXT_DIM, rows[i].label);
+        text(FONT_REGULAR, 19, x + 30, ry + rh / 2 + 7, on ? C_TEXT : C_TEXT_DIM, rows[i].label);
         if (on) {
             float vw = text_w(FONT_BOLD, 19, rows[i].value);
             float vx = x + w - 52 - vw;
-            text(FONT_BOLD, 19, vx, ry + 32, C_TEXT, rows[i].value);
+            text(FONT_BOLD, 19, vx, ry + rh / 2 + 7, C_TEXT, rows[i].value);
             /* < value > chevrons */
             cv_line(&cv, S(vx - 16), S(ry + rh / 2 - 6), S(vx - 22), S(ry + rh / 2), S(2.2f), C_ACCENT);
             cv_line(&cv, S(vx - 22), S(ry + rh / 2), S(vx - 16), S(ry + rh / 2 + 6), S(2.2f), C_ACCENT);
             cv_line(&cv, S(x + w - 36), S(ry + rh / 2 - 6), S(x + w - 30), S(ry + rh / 2), S(2.2f), C_ACCENT);
             cv_line(&cv, S(x + w - 30), S(ry + rh / 2), S(x + w - 36), S(ry + rh / 2 + 6), S(2.2f), C_ACCENT);
         } else {
-            text_right(FONT_REGULAR, 19, x + w - 30, ry + 32, C_TEXT_DIM, rows[i].value);
+            text_right(FONT_REGULAR, 19, x + w - 30, ry + rh / 2 + 7, C_TEXT_DIM, rows[i].value);
         }
     }
 
@@ -772,4 +772,39 @@ void ui_draw_stats(const char *title, const struct ui_stat *stats, int n, const 
     if (note)
         wrapped(FONT_REGULAR, 16, dx + 40, dy + 110 + n * rh + 10, dw - 80, 22, C_TEXT_FAINT, note);
     footer(hints, 1, NULL);
+}
+
+#define OVERLAY_W     330
+#define OVERLAY_ROW_H 22
+
+void ui_overlay_size(int n, int *w, int *h)
+{
+    *w = OVERLAY_W;
+    *h = 40 + n * OVERLAY_ROW_H + 8;
+}
+
+void ui_draw_overlay(canvas_t *dst, const struct ui_overlay_row *rows, int n)
+{
+    /* The drawing helpers work on the screen canvas at the screen's scale;
+     * point them at dst at 1:1 for the duration. */
+    canvas_t saved = cv;
+    float saved_s = s;
+    int i;
+
+    cv = *dst;
+    s = 1.0f;
+    cv_unclip(&cv);
+    cv_fill(&cv, 0, 0, cv.w, cv.h, HEX(0x0B1018));
+    cv_fill(&cv, 0, 0, 3, cv.h, C_ACCENT);
+    text(FONT_BOLD, 15, 16, 24, C_TEXT, "Performance");
+    text_right(FONT_REGULAR, 13, OVERLAY_W - 14, 24, C_TEXT_FAINT, "Back+LB+RB+X hides");
+    for (i = 0; i < n; i++) {
+        float y = 48 + i * OVERLAY_ROW_H;
+        uint32_t c = rows[i].level >= 2 ? C_RED : rows[i].level == 1 ? C_YELLOW : C_TEXT;
+
+        text(FONT_REGULAR, 15, 16, y, C_TEXT_DIM, rows[i].label);
+        text_right(FONT_BOLD, 15, OVERLAY_W - 14, y, c, rows[i].value);
+    }
+    cv = saved;
+    s = saved_s;
 }

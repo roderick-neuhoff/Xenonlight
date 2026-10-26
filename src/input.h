@@ -25,4 +25,8 @@ void input_stream_stop(void);
 /* True once the user held Back+Start+LB+RB to leave the stream. */
 bool input_quit_requested(void);
 
+/* How often Back+LB+RB+X (the performance overlay toggle, as in Moonlight-qt)
+ * was pressed since input_stream_start(). */
+int input_overlay_toggles(void);
+
 void input_rumble(unsigned short controller, unsigned short low, unsigned short high);

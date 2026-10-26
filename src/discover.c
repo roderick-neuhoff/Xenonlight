@@ -38,8 +38,19 @@
 #  define WINDOW 8
 #endif
 
+#ifdef _XBOX
+/* The console may be on Wi-Fi, where a host in power-save mode can take a
+ * few hundred milliseconds to answer ARP. */
+#  define CONNECT_TIMEOUT_MS 600
+#else
+/* libxenon is Ethernet only: a host answers in well under a millisecond. */
+#  define CONNECT_TIMEOUT_MS 300
+#endif
+
 #define HTTP_PORT 47989
-#define CONNECT_TIMEOUT_MS 400
+
+/* probe_start: no socket available right now (try the address again later). */
+#define PROBE_NO_SOCKET (-2)
 
 struct probe {
     int fd;                     /* -1 when the slot is free */
@@ -57,7 +68,20 @@ static int set_nonblocking(int fd)
 #endif
 }
 
-/* Starts a connect to prefix.host; returns the socket, or -1 (address skipped). */
+/* Closes without lingering: XNet keeps a lingering TCP socket counted
+ * against its limit, and a scan closes hundreds of them. */
+static void probe_close(int fd)
+{
+    struct linger lg;
+
+    lg.l_onoff = 1;
+    lg.l_linger = 0;
+    setsockopt(fd, SOL_SOCKET, SO_LINGER, (const char *)&lg, sizeof(lg));
+    sock_close(fd);
+}
+
+/* Starts a connect to prefix.host; returns the socket, -1 if the address
+ * failed at once, or PROBE_NO_SOCKET. */
 static int probe_start(uint32_t prefix, unsigned int host)
 {
     struct sockaddr_in sa;
@@ -65,10 +89,10 @@ static int probe_start(uint32_t prefix, unsigned int host)
 
     fd = (int)socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (fd < 0)
-        return -1;
+        return PROBE_NO_SOCKET;
     if (set_nonblocking(fd) != 0) {
         sock_close(fd);
-        return -1;
+        return PROBE_NO_SOCKET;
     }
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
@@ -77,7 +101,7 @@ static int probe_start(uint32_t prefix, unsigned int host)
     if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0)
         return fd;   /* finished at once; select() reports it writable */
     if (!sock_in_progress()) {
-        sock_close(fd);
+        probe_close(fd);
         return -1;
     }
     return fd;
@@ -101,7 +125,7 @@ int discover_hosts(const char *console_ip, char (*out)[16], int max, struct disc
 {
     struct probe probes[WINDOW];
     unsigned int a, b, c, d, next = 1;
-    uint32_t prefix;
+    uint32_t prefix, starved_since = 0;
     int i, found = 0, active = 0, checked = 0;
 
     if (console_ip == NULL || sscanf(console_ip, "%u.%u.%u.%u", &a, &b, &c, &d) != 4 ||
@@ -121,20 +145,33 @@ int discover_hosts(const char *console_ip, char (*out)[16], int max, struct disc
         struct timeval tv;
         uint32_t now;
         int maxfd = -1;
+        bool starved = false;
+
+        if (progress && progress->cancel)
+            break;
 
         /* Fill free slots. */
-        for (i = 0; i < WINDOW && next <= 254; i++) {
+        for (i = 0; i < WINDOW && next <= 254 && !starved; i++) {
             if (probes[i].fd >= 0)
                 continue;
             while (next <= 254 && probes[i].fd < 0) {
-                unsigned int host = next++;
+                unsigned int host = next;
+                int fd;
 
-                if (host == d)
+                if (host == d) {
+                    next++;
                     continue;
-                probes[i].fd = probe_start(prefix, host);
+                }
+                fd = probe_start(prefix, host);
+                if (fd == PROBE_NO_SOCKET) {
+                    starved = true;   /* leave this address for a later pass */
+                    break;
+                }
+                next++;
+                probes[i].fd = fd;
                 probes[i].host = host;
                 probes[i].started = plat_now_ms();
-                if (probes[i].fd >= 0)
+                if (fd >= 0)
                     active++;
                 else
                     checked++;
@@ -142,8 +179,18 @@ int discover_hosts(const char *console_ip, char (*out)[16], int max, struct disc
         }
         if (progress)
             progress->checked = checked;
-        if (active == 0)
-            break;
+        if (active == 0) {
+            if (next > 254)
+                break;
+            /* No socket at all: wait for the stack to free some, but not forever. */
+            if (!starved_since)
+                starved_since = plat_now_ms() | 1;
+            else if (plat_now_ms() - starved_since > 3000)
+                break;
+            plat_sleep_ms(50);
+            continue;
+        }
+        starved_since = 0;
 
         FD_ZERO(&ws);
         FD_ZERO(&es);
@@ -180,13 +227,16 @@ int discover_hosts(const char *console_ip, char (*out)[16], int max, struct disc
                 done = true;
             }
             if (done) {
-                sock_close(p->fd);
+                probe_close(p->fd);
                 p->fd = -1;
                 active--;
                 checked++;
             }
         }
     }
+    for (i = 0; i < WINDOW; i++)   /* cancelled or out of sockets */
+        if (probes[i].fd >= 0)
+            probe_close(probes[i].fd);
     if (progress)
         progress->checked = checked;
     return found;
@@ -213,7 +263,7 @@ bool discover_probe(const char *ip, int timeout_ms)
     tv.tv_usec = (timeout_ms % 1000) * 1000;
     if (select(fd + 1, NULL, &ws, &es, &tv) > 0 && FD_ISSET(fd, &ws) && !FD_ISSET(fd, &es))
         ok = connect_succeeded(fd);
-    sock_close(fd);
+    probe_close(fd);
     return ok;
 }
 

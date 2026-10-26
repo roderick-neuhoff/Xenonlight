@@ -175,6 +175,14 @@ static void *refresh_task(void *arg)
     (void)arg;
     gs_server_free(&server);
     memset(&server, 0, sizeof(server));
+    /* A sleeping or switched-off PC would keep a blocking connect waiting
+     * for many seconds (minutes on lwIP); a short probe answers quickly. */
+    if (!discover_probe(cfg.host, 2000)) {
+        server_ok = false;
+        snprintf(server_error, sizeof(server_error),
+                 "No answer from %s. Is the PC on, and is Sunshine running?", cfg.host);
+        return NULL;
+    }
     server_ok = gs_server_info(&server, cfg.host);
     if (!server_ok)
         snprintf(server_error, sizeof(server_error), "%s", gs_error());
@@ -856,10 +864,14 @@ static void draw_scan(void *ctx, uint32_t t)
     struct scan_job *j = (struct scan_job *)ctx;
     char msg[160];
 
-    if (j->naming)
+    if (input_menu_pressed() & B_FLAG)
+        j->progress.cancel = true;
+    if (j->progress.cancel && !j->naming)
+        snprintf(msg, sizeof(msg), "Stopping...");
+    else if (j->naming)
         snprintf(msg, sizeof(msg), "Found %d. Asking for names...", j->progress.found);
     else
-        snprintf(msg, sizeof(msg), "Checked %d of %d addresses \xC2\xB7 found %d", j->progress.checked,
+        snprintf(msg, sizeof(msg), "Checked %d of %d addresses \xC2\xB7 found %d \xC2\xB7 B stops", j->progress.checked,
                  j->progress.total ? j->progress.total : 253, j->progress.found);
     ui_draw_busy("Searching for PCs running Sunshine", msg, t);
 }

@@ -234,6 +234,9 @@ static bool network_init(void)
     /* The video stream arrives in bursts of up to a frame (~100 KB). */
     xnsp.cfgSockDefaultRecvBufsizeInK = 255;
     xnsp.cfgSockDefaultSendBufsizeInK = 64;
+    /* The default of 32 TCP sockets is tight for the host search's parallel
+     * connects (src/discover.c) plus box art and HTTPS requests. */
+    xnsp.cfgSockMaxStreamSockets = 64;
     if (XNetStartup(&xnsp) != 0 || WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
         return false;
 

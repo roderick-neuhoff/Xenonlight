@@ -20,6 +20,7 @@
 #include "audio.h"
 #include "config.h"
 #include "crypto.h"
+#include "discover.h"
 #include "gamestream.h"
 #include "input.h"
 #include "video.h"
@@ -717,12 +718,157 @@ static void set_item(struct ui_menu_item *it, const char *title, const char *sub
     it->enabled = enabled;
 }
 
+/* ------------------------------------------------------------ host search */
+
+struct found_host {
+    char address[16];
+    char name[64];
+    char detail[160];
+};
+
+static struct found_host found[DISCOVER_MAX];
+static int found_count;
+
+struct scan_job {
+    struct discover_progress progress;
+    volatile bool naming;       /* scan done, asking the hosts for their names */
+    bool ok;                    /* false: the console has no usable address */
+};
+
+static void *scan_task(void *arg)
+{
+    struct scan_job *j = (struct scan_job *)arg;
+    char addrs[DISCOVER_MAX][16];
+    int i, n;
+
+    found_count = 0;
+    n = discover_hosts(plat_console_ip(), addrs, DISCOVER_MAX, &j->progress);
+    j->ok = n >= 0;
+    j->naming = true;
+    for (i = 0; i < n; i++) {
+        struct found_host *f = &found[found_count++];
+        struct gs_server s;
+
+        memset(&s, 0, sizeof(s));
+        memcpy(f->address, addrs[i], sizeof(f->address));   /* same size, NUL-terminated */
+        if (gs_server_info(&s, f->address)) {
+            snprintf(f->name, sizeof(f->name), "%s", s.hostname[0] ? s.hostname : "Gaming PC");
+            snprintf(f->detail, sizeof(f->detail), "%.15s \xC2\xB7 %s %s \xC2\xB7 %s", addrs[i],
+                     s.is_nvidia ? "GeForce Experience" : "Sunshine", s.app_version,
+                     s.paired ? "Paired" : "Not paired yet");
+        } else {
+            /* Something answers on the GameStream port but not like a host we can use. */
+            memcpy(f->name, f->address, sizeof(f->address));
+            snprintf(f->detail, sizeof(f->detail), "%s", gs_error());
+        }
+        gs_server_free(&s);
+    }
+    return NULL;
+}
+
+static void draw_scan(void *ctx, uint32_t t)
+{
+    struct scan_job *j = (struct scan_job *)ctx;
+    char msg[160];
+
+    if (j->naming)
+        snprintf(msg, sizeof(msg), "Found %d. Asking for names...", j->progress.found);
+    else
+        snprintf(msg, sizeof(msg), "Checked %d of %d addresses \xC2\xB7 found %d", j->progress.checked,
+                 j->progress.total ? j->progress.total : 253, j->progress.found);
+    ui_draw_busy("Searching for PCs running Sunshine", msg, t);
+}
+
+static bool scan_network(void)
+{
+    struct scan_job j;
+
+    memset(&j, 0, sizeof(j));
+    run_task(scan_task, &j, draw_scan, &j);
+    return j.ok;
+}
+
+static bool set_host(const char *address)
+{
+    if (!strcmp(cfg.host, address))
+        return true;
+    snprintf(cfg.host, sizeof(cfg.host), "%s", address);
+    config_save(&cfg);
+    clear_apps();
+    return true;
+}
+
+/* Lets the user pick a host found on the network or type an address.
+ * Returns true when cfg.host was chosen (it may be unchanged). */
+static bool host_menu(void)
+{
+    int sel = 0;
+
+    if (!scan_network()) {
+        message(ICON_INFO, "Can't search this network",
+                "The console's address isn't known, so enter the PC's address instead.");
+        if (!edit_ip(cfg.host, sizeof(cfg.host)))
+            return false;
+        config_save(&cfg);
+        clear_apps();
+        return true;
+    }
+
+    for (;;) {
+        struct ui_menu_item items[DISCOVER_MAX + 2];
+        char note[64], current[DISCOVER_MAX][200];
+        int n = found_count + 2, i, b;
+
+        for (i = 0; i < found_count; i++) {
+            snprintf(current[i], sizeof(current[i]), "%s%s", found[i].detail,
+                     !strcmp(found[i].address, cfg.host) ? " \xC2\xB7 Current host" : "");
+            set_item(&items[i], found[i].name, current[i], ICON_MONITOR, true);
+        }
+        set_item(&items[found_count], "Search again", "Start Sunshine on the PC first if it isn't listed",
+                 ICON_SEARCH, true);
+        set_item(&items[found_count + 1], "Enter an address",
+                 cfg.host[0] ? cfg.host : "Type the PC's IP address with the d-pad", ICON_EDIT, true);
+        if (found_count == 0)
+            snprintf(note, sizeof(note), "No PCs found");
+        else
+            snprintf(note, sizeof(note), "%d found", found_count);
+        if (sel >= n)
+            sel = n - 1;
+
+        ui_draw_hosts(items, n, sel, note);
+        ui_present();
+        b = wait_button();
+        if (b & UP_FLAG) sel = (sel + n - 1) % n;
+        if (b & DOWN_FLAG) sel = (sel + 1) % n;
+        if (b & B_FLAG)
+            return false;
+        if ((b & Y_FLAG) || ((b & A_FLAG) && sel == found_count)) {
+            scan_network();
+            sel = 0;
+            continue;
+        }
+        if (!(b & A_FLAG))
+            continue;
+        if (sel < found_count)
+            return set_host(found[sel].address);
+        {
+            char ip[64];
+
+            snprintf(ip, sizeof(ip), "%s", cfg.host);
+            if (edit_ip(ip, sizeof(ip)))
+                return set_host(ip);
+        }
+    }
+}
+
+
 static void main_menu(void)
 {
     enum { N_ITEMS = 7 };
     int sel = 0;
 
-    if (cfg.host[0])
+    /* First start: look for the PC instead of asking for its address. */
+    if (cfg.host[0] || host_menu())
         refresh_server();
 
     for (;;) {
@@ -747,7 +893,7 @@ static void main_menu(void)
             snprintf(sub[0], 160, "%s", !cfg.host[0] ? "Set the host address first" :
                      server_ok ? "Pair with the host first" : "Host not reachable");
         snprintf(sub[1], 160, "%s", paired ? "Already paired" : "Enter a PIN in Sunshine on your PC");
-        snprintf(sub[2], 160, "%s", cfg.host[0] ? cfg.host : "Not set");
+        snprintf(sub[2], 160, "%s", cfg.host[0] ? cfg.host : "Not set · search the network or enter it");
         snprintf(sub[3], 160, "%dx%d \xC2\xB7 %d FPS \xC2\xB7 %d Mbps%s", cfg.width, cfg.height, cfg.fps,
                  cfg.bitrate_kbps / 1000, !plat_has_renderer_choice() ? "" :
                  cfg.renderer == RENDERER_GPU ? " \xC2\xB7 GPU" : " \xC2\xB7 CPU");
@@ -784,11 +930,8 @@ static void main_menu(void)
             refresh_server();
             break;
         case 2:
-            if (edit_ip(cfg.host, sizeof(cfg.host))) {
-                config_save(&cfg);
-                clear_apps();
+            if (host_menu())
                 refresh_server();
-            }
             break;
         case 3:
             settings_menu();

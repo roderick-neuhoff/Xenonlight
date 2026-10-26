@@ -29,7 +29,8 @@ Get the latest build from [Releases](../../releases):
 
 ## Using it
 
-1. **Host address**: enter your PC's IP address with the d-pad (no auto-discovery).
+1. **Host address**: the console searches its network for PCs running Sunshine and lists them
+   by name; pick yours. If it isn't listed, *Enter an address* takes the IP with the d-pad.
 2. **Pair with host**: the 360 shows a PIN; enter it in Sunshine's web UI under *PIN*.
 3. **Start streaming**: pick a game from the grid. X quits a running game.
 4. To leave a stream, hold **Back + Start + LB + RB**.
@@ -90,8 +91,8 @@ a XeLLLaunch `.xex`; XeLL then boots `xenon.elf` the same way.
 
 ## Using the XeLL version
 
-1. **Change host IP**: enter your PC's IP address with the d-pad (no auto-discovery or DNS).
-   With the direct cable that's `192.168.1.98`.
+1. **Host address**: pick the PC from the search results, or enter its IP address with the
+   d-pad. With the direct cable that's `192.168.1.98`.
 2. **Pair with host**: the 360 shows a PIN. Enter it in Sunshine's web UI under *PIN*.
    Pair **once**: the client certificate is derived from the console's CPU key, so it's the
    same after every reboot, with or without a USB stick.
@@ -158,7 +159,9 @@ descriptors (`scripts/build-deps.sh` patches libxenon) so video bursts don't ove
 - **No FFmpeg AltiVec.** Xenon's VMX128 lacks the integer multiply/sum instructions FFmpeg's
   H.264 routines use, and GCC 16 hits an internal compiler error on that code anyway.
 - **Built without `-mpowerpc64`.** GCC 16 miscompiles mbedTLS with it (see `Makefile`).
-- **No mDNS discovery or DNS.** Enter the IP manually.
+- **No mDNS or DNS.** Hosts are found by trying port 47989 on every address of the console's
+  /24 (about 12 s on this build, 8 connects at a time to fit lwIP's ARP table). Hosts on another
+  subnet need their IP entered.
 - **XeLL only.** This libxenon program takes over the whole console; the dashboard version
   (`xdk/`) is the one that runs as a normal `.xex`.
 - Wireless controllers depend on libxenon's USB support. Wired controllers are the safe choice.

@@ -129,5 +129,15 @@ int main(int argc, char **argv)
     snprintf(stats[3].value, 64, "2.1 ms (GPU)");
     snprintf(stats[4].value, 64, "1280x720 @ 30 FPS on 1280x720");
     ui_draw_stats("Stream ended", stats, 5, "The app keeps running on the PC. Use \"Quit running app\" to close it."); shot("10_stats");
+    {
+        struct ui_menu_item hosts[] = {
+            { "DESKTOP-GAMING", "192.168.1.98 · Sunshine 2026.914 · Paired · Current host", ICON_MONITOR, true },
+            { "LIVING-ROOM", "192.168.1.120 · Sunshine 2025.122 · Not paired yet", ICON_MONITOR, true },
+            { "Search again", "Start Sunshine on the PC first if it isn't listed", ICON_SEARCH, true },
+            { "Enter an address", "192.168.1.98", ICON_EDIT, true },
+        };
+        ui_draw_hosts(hosts, 4, 0, "2 found"); shot("11_hosts");
+        ui_draw_busy("Searching for PCs running Sunshine", "Checked 120 of 253 addresses · found 1", 500); shot("12_search");
+    }
     return 0;
 }

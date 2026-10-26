@@ -49,7 +49,7 @@ APP_CFLAGS  := $(COMMON_CFLAGS) $(POSIX_DEFS) -Icompat/include -I$(MLC)/src -Wal
 XSOCK_CFLAGS := $(COMMON_CFLAGS) $(LWIP_INC) -DBYTE_ORDER=BIG_ENDIAN -Wall
 
 APP_SRCS := src/main.c src/app.c src/hw.c src/video.c src/gpu.c src/audio.c src/input.c src/config.c src/storage_xenon.c \
-	src/crypto.c src/http.c src/gamestream.c \
+	src/crypto.c src/http.c src/gamestream.c src/discover.c \
 	src/ui/canvas.c src/ui/font.c src/ui/ui.c src/ui/image.c src/ui/present_xenon.c \
 	compat/xthread.c compat/pthread.c compat/posix.c
 ASM_SRCS := compat/xthread_switch.S src/ui/fonts.S

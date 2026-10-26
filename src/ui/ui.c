@@ -260,6 +260,14 @@ static void icon(int which, float cx, float cy, float k, uint32_t color)
         cv_line(&cv, X - K * 0.5f, Y, X - K * 0.12f, Y + K * 0.4f, K * 0.2f, color);
         cv_line(&cv, X - K * 0.12f, Y + K * 0.4f, X + K * 0.55f, Y - K * 0.4f, K * 0.2f, color);
         break;
+    case ICON_SEARCH:
+        cv_ring(&cv, X - K * 0.18f, Y - K * 0.18f, K * 0.48f, K * 0.17f, color);
+        cv_line(&cv, X + K * 0.2f, Y + K * 0.2f, X + K * 0.7f, Y + K * 0.7f, K * 0.22f, color);
+        break;
+    case ICON_EDIT:
+        cv_line(&cv, X - K * 0.3f, Y + K * 0.3f, X + K * 0.5f, Y - K * 0.5f, K * 0.32f, color);
+        cv_triangle(&cv, X - K * 0.72f, Y + K * 0.72f, X - K * 0.56f, Y + K * 0.1f, X - K * 0.1f, Y + K * 0.56f, color);
+        break;
     }
 }
 
@@ -424,7 +432,7 @@ void ui_draw_main(const struct ui_host *host, const struct ui_menu_item *items, 
     } else {
         text(FONT_BOLD, 24, px + 98, y + 52, C_TEXT, "No host yet");
         wrapped(FONT_REGULAR, 16, px + 98, y + 78, pw - 120, 22, C_TEXT_DIM,
-                "Choose \"Host address\" and enter the IP of the PC running Sunshine.");
+                "Choose \"Host address\" to find the PC running Sunshine on your network.");
     }
 
     /* Tip. */
@@ -594,6 +602,45 @@ void ui_draw_settings(const struct ui_setting *rows, int n, int sel)
         wrapped(FONT_REGULAR, 16, x + 4, y + rh * n + 50, w - 8, 22, C_TEXT_DIM, rows[sel].help);
 
     footer(hints, 2, NULL);
+}
+
+void ui_draw_hosts(const struct ui_menu_item *items, int n, int sel, const char *note)
+{
+    static const struct hint hints[] = { { "A", "Select" }, { "Y", "Search again" }, { "B", "Back" } };
+    enum { VISIBLE = 6 };
+    float x = 64, y = 150, cw = W - 128, ch = 64, gap = 10;
+    int i, first = sel >= VISIBLE ? sel - VISIBLE + 1 : 0;
+
+    begin_frame();
+    header(NULL);
+    text(FONT_BOLD, 28, 64, 128, C_TEXT, "Choose a host");
+    if (note)
+        text_right(FONT_REGULAR, 16, W - 64, 128, C_TEXT_DIM, note);
+
+    for (i = first; i < n && i < first + VISIBLE; i++) {
+        float cy = y + (i - first) * (ch + gap);
+        bool on = i == sel;
+
+        card(x, cy, cw, ch, 14, on);
+        cv_circle(&cv, S(x + 38), S(cy + ch / 2), S(20), on ? C_ACCENT : WITH_ALPHA(C_ACCENT, 46));
+        icon(items[i].icon, x + 38, cy + ch / 2, 11, on ? HEX(0xFFFFFF) : C_ACCENT);
+        text_fit(FONT_BOLD, 20, x + 74, cy + 28, cw - 120, C_TEXT, items[i].title);
+        if (items[i].subtitle)
+            text_fit(FONT_REGULAR, 15, x + 74, cy + 49, cw - 120, C_TEXT_DIM, items[i].subtitle);
+        if (on) {
+            cv_line(&cv, S(x + cw - 34), S(cy + ch / 2 - 8), S(x + cw - 26), S(cy + ch / 2), S(2.5f), C_ACCENT);
+            cv_line(&cv, S(x + cw - 26), S(cy + ch / 2), S(x + cw - 34), S(cy + ch / 2 + 8), S(2.5f), C_ACCENT);
+        }
+    }
+    /* More rows above/below: small arrows at the list's right edge. */
+    if (first > 0)
+        cv_triangle(&cv, S(W - 52), S(y - 6), S(W - 40), S(y - 6), S(W - 46), S(y - 14), C_TEXT_DIM);
+    if (first + VISIBLE < n) {
+        float by = y + VISIBLE * (ch + gap) - gap + 6;
+        cv_triangle(&cv, S(W - 52), S(by), S(W - 40), S(by), S(W - 46), S(by + 8), C_TEXT_DIM);
+    }
+
+    footer(hints, 3, NULL);
 }
 
 void ui_draw_ip_editor(const int octets[4], int sel)

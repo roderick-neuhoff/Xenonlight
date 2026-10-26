@@ -240,7 +240,7 @@ def target_app():
     """Our code: the shared app, GameStream client and UI (src/), compiled as
     C++ like moonlight-common-c, plus the SDK platform layer (xdk/src)."""
     shared = [os.path.join(ROOT, "src", f) for f in
-              ("app.c", "config.c", "crypto.c", "http.c", "gamestream.c",
+              ("app.c", "config.c", "crypto.c", "http.c", "gamestream.c", "discover.c",
                "ui/canvas.c", "ui/font.c", "ui/ui.c", "ui/image.c")]
     platform = [os.path.join(SRC, f + ".cpp") for f in ("main_xdk", "gfx_xdk", "audio_xdk", "input_xdk")]
     os.makedirs(os.path.join(OUT, "gen"), exist_ok=True)

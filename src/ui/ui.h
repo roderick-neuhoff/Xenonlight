@@ -11,7 +11,7 @@
 
 enum ui_icon {
     ICON_PLAY, ICON_LINK, ICON_UNLINK, ICON_MONITOR, ICON_GEAR, ICON_STOP, ICON_REFRESH,
-    ICON_INFO, ICON_ERROR, ICON_CHECK
+    ICON_INFO, ICON_ERROR, ICON_CHECK, ICON_SEARCH, ICON_EDIT
 };
 
 enum ui_host_state { HOST_UNKNOWN, HOST_CONNECTING, HOST_OFFLINE, HOST_UNPAIRED, HOST_PAIRED };
@@ -60,6 +60,8 @@ void ui_draw_main(const struct ui_host *host, const struct ui_menu_item *items, 
                   const char *console_ip, uint32_t t_ms);
 void ui_draw_apps(const struct ui_host *host, const struct ui_app *apps, int n, int sel, uint32_t t_ms);
 void ui_draw_settings(const struct ui_setting *rows, int n, int sel);
+/* Host chooser: found hosts plus fixed actions, scrolling when they don't fit. */
+void ui_draw_hosts(const struct ui_menu_item *items, int n, int sel, const char *note);
 void ui_draw_ip_editor(const int octets[4], int sel);
 void ui_draw_pair(const struct ui_host *host, const char *pin, uint32_t t_ms);
 void ui_draw_busy(const char *title, const char *message, uint32_t t_ms);

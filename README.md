@@ -164,8 +164,8 @@ descriptors (`scripts/build-deps.sh` patches libxenon) so video bursts don't ove
   H.264 routines use, and GCC 16 hits an internal compiler error on that code anyway.
 - **Built without `-mpowerpc64`.** GCC 16 miscompiles mbedTLS with it (see `Makefile`).
 - **No mDNS or DNS.** Hosts are found by trying port 47989 on every address of the console's
-  /24 (about 12 s on this build, 8 connects at a time to fit lwIP's ARP table). Hosts on another
-  subnet need their IP entered.
+  /24 (about 9 s on this build, 8 connects at a time to fit lwIP's ARP table; B stops it early).
+  Hosts on another subnet need their IP entered.
 - **XeLL only.** This libxenon program takes over the whole console; the dashboard version
   (`xdk/`) is the one that runs as a normal `.xex`.
 - Wireless controllers depend on libxenon's USB support. Wired controllers are the safe choice.

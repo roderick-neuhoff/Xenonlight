@@ -36,6 +36,10 @@ Get the latest build from [Releases](../../releases):
 4. To leave a stream, hold **Back + Start + LB + RB**.
 5. Dashboard version: hold **Start** for a second to use the controller as a **mouse**
    (left stick moves, right stick scrolls, A/B = left/right click). Hold it again to switch back.
+6. **Wake PC**: after pairing, the console remembers the PC's network adapter address. When the
+   PC is asleep or off, *Refresh* turns into *Wake PC*, which sends Wake-on-LAN and waits up to a
+   minute for it to come up. Wake-on-LAN must be enabled on the PC (BIOS and network adapter),
+   and it usually needs Ethernet.
 
 Tips: 720p30 at 5–8 Mbps is the sweet spot. In Sunshine (*Configuration → NVIDIA NVENC*),
 **"Prefer CAVLC over CABAC"** makes decoding cheaper. The stats screen after each stream shows

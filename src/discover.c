@@ -6,10 +6,13 @@
  * Connects are non-blocking and kept a fixed number in flight. A host that
  * exists answers within a few milliseconds (accept or reset); an empty
  * address never answers ARP, so it costs one CONNECT_TIMEOUT_MS.
+ *
+ * Also here: Wake-on-LAN, which needs the same socket plumbing.
  */
 #include "discover.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "platform.h"
@@ -187,4 +190,106 @@ int discover_hosts(const char *console_ip, char (*out)[16], int max, struct disc
     if (progress)
         progress->checked = checked;
     return found;
+}
+
+bool discover_probe(const char *ip, int timeout_ms)
+{
+    unsigned int a, b, c, d;
+    fd_set ws, es;
+    struct timeval tv;
+    bool ok = false;
+    int fd;
+
+    if (ip == NULL || sscanf(ip, "%u.%u.%u.%u", &a, &b, &c, &d) != 4 || a > 255 || b > 255 || c > 255 || d > 255)
+        return false;
+    fd = probe_start((a << 24) | (b << 16) | (c << 8), d);
+    if (fd < 0)
+        return false;
+    FD_ZERO(&ws);
+    FD_ZERO(&es);
+    FD_SET(fd, &ws);
+    FD_SET(fd, &es);
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    if (select(fd + 1, NULL, &ws, &es, &tv) > 0 && FD_ISSET(fd, &ws) && !FD_ISSET(fd, &es))
+        ok = connect_succeeded(fd);
+    sock_close(fd);
+    return ok;
+}
+
+/* ------------------------------------------------------------ Wake-on-LAN */
+
+static bool parse_mac(const char *mac, unsigned char out[6])
+{
+    int i;
+
+    if (mac == NULL || strlen(mac) != 17)
+        return false;
+    for (i = 0; i < 6; i++) {
+        char hex[3];
+        char *end;
+
+        if (i < 5 && mac[i * 3 + 2] != ':' && mac[i * 3 + 2] != '-')
+            return false;
+        hex[0] = mac[i * 3];
+        hex[1] = mac[i * 3 + 1];
+        hex[2] = '\0';
+        out[i] = (unsigned char)strtoul(hex, &end, 16);
+        if (end != hex + 2)
+            return false;
+    }
+    return true;
+}
+
+bool wol_mac_valid(const char *mac)
+{
+    unsigned char m[6];
+
+    return parse_mac(mac, m) && (m[0] | m[1] | m[2] | m[3] | m[4] | m[5]) != 0;
+}
+
+bool wol_send(const char *mac, const char *host_ip)
+{
+    /* Same ports as Moonlight-qt: discard/echo, plus the GameStream ports,
+     * which a router may forward to the PC when waking it from outside. */
+    static const unsigned short ports[] = { 9, 7, 47998, 47999, 48000, 48002, 48010 };
+    unsigned char packet[102], m[6];
+    uint32_t targets[2];
+    unsigned int a, b, c, d;
+    int fd, i, j, nt = 0, sent = 0;
+#ifdef _XBOX
+    BOOL on = TRUE;
+#else
+    int on = 1;
+#endif
+
+    if (!parse_mac(mac, m))
+        return false;
+    memset(packet, 0xFF, 6);
+    for (i = 0; i < 16; i++)
+        memcpy(packet + 6 + i * 6, m, 6);
+
+    targets[nt++] = INADDR_BROADCAST;
+    if (host_ip && sscanf(host_ip, "%u.%u.%u.%u", &a, &b, &c, &d) == 4 && a < 256 && b < 256 && c < 256)
+        targets[nt++] = htonl((a << 24) | (b << 16) | (c << 8) | 255);
+
+    fd = (int)socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0)
+        return false;
+    setsockopt(fd, SOL_SOCKET, SO_BROADCAST, (const char *)&on, sizeof(on));
+    for (i = 0; i < nt; i++) {
+        for (j = 0; j < (int)(sizeof(ports) / sizeof(ports[0])); j++) {
+            struct sockaddr_in sa;
+
+            memset(&sa, 0, sizeof(sa));
+            sa.sin_family = AF_INET;
+            sa.sin_port = htons(ports[j]);
+            sa.sin_addr.s_addr = targets[i];
+            if (sendto(fd, (const char *)packet, sizeof(packet), 0, (struct sockaddr *)&sa, sizeof(sa)) ==
+                (int)sizeof(packet))
+                sent++;
+        }
+    }
+    sock_close(fd);
+    return sent > 0;
 }

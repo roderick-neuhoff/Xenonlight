@@ -12,6 +12,7 @@ struct gs_app {
 struct gs_server {
     char address[64];
     char hostname[64];          /* PC name from serverinfo, may be empty */
+    char mac[18];               /* "aa:bb:cc:dd:ee:ff"; Sunshine sends zeros unless paired */
     unsigned short http_port, https_port;
     bool paired;
     int current_game;

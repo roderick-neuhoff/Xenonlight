@@ -204,10 +204,14 @@ static bool load_serverinfo(struct gs_server *srv, bool https)
     https_port = xml_get(r.body, "HttpsPort");
     gfever = xml_get(r.body, "GfeVersion");
     {
-        char *name = xml_get(r.body, "hostname");
+        char *name = xml_get(r.body, "hostname"), *mac = xml_get(r.body, "mac");
         if (name) {
             snprintf(srv->hostname, sizeof(srv->hostname), "%s", name);
             free(name);
+        }
+        if (mac) {
+            snprintf(srv->mac, sizeof(srv->mac), "%s", mac);
+            free(mac);
         }
     }
 

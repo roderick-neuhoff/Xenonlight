@@ -131,13 +131,18 @@ int main(int argc, char **argv)
     ui_draw_stats("Stream ended", stats, 5, "The app keeps running on the PC. Use \"Quit running app\" to close it."); shot("10_stats");
     {
         struct ui_menu_item hosts[] = {
-            { "DESKTOP-GAMING", "192.168.1.98 · Sunshine 2026.914 · Paired · Current host", ICON_MONITOR, true },
-            { "LIVING-ROOM", "192.168.1.120 · Sunshine 2025.122 · Not paired yet", ICON_MONITOR, true },
+            { "DESKTOP-GAMING", "192.168.1.98 \xC2\xB7 Sunshine 2026.914 \xC2\xB7 Paired \xC2\xB7 Current host", ICON_MONITOR, true },
+            { "LIVING-ROOM", "192.168.1.120 \xC2\xB7 Sunshine 2025.122 \xC2\xB7 Not paired yet", ICON_MONITOR, true },
             { "Search again", "Start Sunshine on the PC first if it isn't listed", ICON_SEARCH, true },
             { "Enter an address", "192.168.1.98", ICON_EDIT, true },
         };
+        struct ui_host off = { NULL, "192.168.1.98", HOST_OFFLINE, NULL, "Could not reach 192.168.1.98" };
         ui_draw_hosts(hosts, 4, 0, "2 found"); shot("11_hosts");
-        ui_draw_busy("Searching for PCs running Sunshine", "Checked 120 of 253 addresses · found 1", 500); shot("12_search");
+        items[5].title = "Wake PC";
+        items[5].subtitle = "Send Wake-on-LAN to 2c:f0:5d:12:34:56 (Y checks again)";
+        items[5].icon = ICON_POWER;
+        ui_draw_main(&off, items, 7, 5, "192.168.1.99", 0); shot("13_wake");
+        ui_draw_busy("Searching for PCs running Sunshine", "Checked 120 of 253 addresses \xC2\xB7 found 1", 500); shot("12_search");
     }
     return 0;
 }

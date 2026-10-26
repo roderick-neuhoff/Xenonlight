@@ -181,6 +181,15 @@ static void *refresh_task(void *arg)
     return NULL;
 }
 
+/* Remembers the host's MAC address (paired hosts report it) for Wake-on-LAN. */
+static void learn_mac(const char *mac)
+{
+    if (wol_mac_valid(mac) && strcmp(cfg.host_mac, mac) != 0) {
+        snprintf(cfg.host_mac, sizeof(cfg.host_mac), "%s", mac);
+        config_save(&cfg);
+    }
+}
+
 static void refresh_server(void)
 {
     char title[96];
@@ -191,6 +200,79 @@ static void refresh_server(void)
     }
     snprintf(title, sizeof(title), "Connecting to %s", cfg.host);
     run_busy(title, "Checking the host's status...", refresh_task, NULL);
+    if (server_ok)
+        learn_mac(server.mac);
+}
+
+/* ------------------------------------------------------------ Wake-on-LAN */
+
+#define WAKE_TIMEOUT_MS 60000
+#define WAKE_RESEND_MS  10000
+
+struct wake_job {
+    uint32_t start;
+    volatile bool cancel;
+    bool sent, awake;
+};
+
+static void *wake_task(void *arg)
+{
+    struct wake_job *j = (struct wake_job *)arg;
+    uint32_t last_send = plat_now_ms();
+
+    j->sent = wol_send(cfg.host_mac, cfg.host);
+    while (j->sent && !j->cancel && plat_now_ms() - j->start < WAKE_TIMEOUT_MS) {
+        if (plat_now_ms() - last_send >= WAKE_RESEND_MS) {
+            wol_send(cfg.host_mac, cfg.host);
+            last_send = plat_now_ms();
+        }
+        /* A short probe first: a full serverinfo request to a sleeping PC
+         * would sit in connect() for many seconds. */
+        if (discover_probe(cfg.host, 1000)) {
+            refresh_task(NULL);
+            if (server_ok) {
+                j->awake = true;
+                break;
+            }
+        }
+        plat_sleep_ms(500);
+    }
+    return NULL;
+}
+
+static void draw_wake(void *ctx, uint32_t t)
+{
+    struct wake_job *j = (struct wake_job *)ctx;
+    char title[96], msg[160];
+
+    if (input_menu_pressed() & B_FLAG)
+        j->cancel = true;
+    snprintf(title, sizeof(title), "Waking %s", cfg.host);
+    if (j->cancel)
+        snprintf(msg, sizeof(msg), "Stopping...");
+    else
+        snprintf(msg, sizeof(msg), "Sent the wake-up packet. Waiting for the PC to start (%u s). B stops.",
+                 (unsigned)((t - j->start) / 1000));
+    ui_draw_busy(title, msg, t);
+}
+
+static void wake_host(void)
+{
+    struct wake_job j;
+
+    memset(&j, 0, sizeof(j));
+    j.start = plat_now_ms();
+    run_task(wake_task, &j, draw_wake, &j);
+    if (j.awake) {
+        learn_mac(server.mac);
+        return;
+    }
+    if (!j.sent)
+        message(ICON_ERROR, "Couldn't send Wake-on-LAN", "The console couldn't send the wake-up packet.");
+    else if (!j.cancel)
+        message(ICON_ERROR, "The PC didn't wake up",
+                "Wake-on-LAN has to be enabled in the PC's BIOS and in its network adapter's settings, and "
+                "most PCs only wake over Ethernet, not Wi-Fi.");
 }
 
 /* ------------------------------------------------------------ IP editor */
@@ -724,6 +806,7 @@ struct found_host {
     char address[16];
     char name[64];
     char detail[160];
+    char mac[18];
 };
 
 static struct found_host found[DISCOVER_MAX];
@@ -750,12 +833,14 @@ static void *scan_task(void *arg)
         struct gs_server s;
 
         memset(&s, 0, sizeof(s));
+        memset(f, 0, sizeof(*f));
         memcpy(f->address, addrs[i], sizeof(f->address));   /* same size, NUL-terminated */
         if (gs_server_info(&s, f->address)) {
             snprintf(f->name, sizeof(f->name), "%s", s.hostname[0] ? s.hostname : "Gaming PC");
             snprintf(f->detail, sizeof(f->detail), "%.15s \xC2\xB7 %s %s \xC2\xB7 %s", addrs[i],
                      s.is_nvidia ? "GeForce Experience" : "Sunshine", s.app_version,
                      s.paired ? "Paired" : "Not paired yet");
+            memcpy(f->mac, s.mac, sizeof(f->mac));
         } else {
             /* Something answers on the GameStream port but not like a host we can use. */
             memcpy(f->name, f->address, sizeof(f->address));
@@ -788,13 +873,16 @@ static bool scan_network(void)
     return j.ok;
 }
 
-static bool set_host(const char *address)
+/* mac may be NULL or unknown; a new address forgets the old host's MAC. */
+static bool set_host(const char *address, const char *mac)
 {
-    if (!strcmp(cfg.host, address))
-        return true;
-    snprintf(cfg.host, sizeof(cfg.host), "%s", address);
-    config_save(&cfg);
-    clear_apps();
+    if (strcmp(cfg.host, address) != 0) {
+        snprintf(cfg.host, sizeof(cfg.host), "%s", address);
+        cfg.host_mac[0] = '\0';
+        config_save(&cfg);
+        clear_apps();
+    }
+    learn_mac(mac);
     return true;
 }
 
@@ -807,11 +895,12 @@ static bool host_menu(void)
     if (!scan_network()) {
         message(ICON_INFO, "Can't search this network",
                 "The console's address isn't known, so enter the PC's address instead.");
-        if (!edit_ip(cfg.host, sizeof(cfg.host)))
-            return false;
-        config_save(&cfg);
-        clear_apps();
-        return true;
+        {
+            char ip[64];
+
+            snprintf(ip, sizeof(ip), "%s", cfg.host);
+            return edit_ip(ip, sizeof(ip)) && set_host(ip, NULL);
+        }
     }
 
     for (;;) {
@@ -850,13 +939,13 @@ static bool host_menu(void)
         if (!(b & A_FLAG))
             continue;
         if (sel < found_count)
-            return set_host(found[sel].address);
+            return set_host(found[sel].address, found[sel].mac);
         {
             char ip[64];
 
             snprintf(ip, sizeof(ip), "%s", cfg.host);
             if (edit_ip(ip, sizeof(ip)))
-                return set_host(ip);
+                return set_host(ip, NULL);
         }
     }
 }
@@ -877,6 +966,8 @@ static void main_menu(void)
         bool paired = server_ok && server.paired;
         const char *running = server_ok && server.current_game ? (h.running_app ? h.running_app : "An app") : NULL;
         struct ui_menu_item items[N_ITEMS];
+        /* Offline host with a known MAC: "Refresh" (still on Y) becomes "Wake PC". */
+        bool can_wake = cfg.host[0] && !server_ok && wol_mac_valid(cfg.host_mac);
         int b;
 
         set_item(&items[0], "Start streaming", sub[0], ICON_PLAY, paired);
@@ -884,7 +975,10 @@ static void main_menu(void)
         set_item(&items[2], "Host address", sub[2], ICON_MONITOR, true);
         set_item(&items[3], "Settings", sub[3], ICON_GEAR, true);
         set_item(&items[4], "Quit running app", sub[4], ICON_STOP, paired && running != NULL);
-        set_item(&items[5], "Refresh", sub[5], ICON_REFRESH, cfg.host[0] != 0);
+        if (can_wake)
+            set_item(&items[5], "Wake PC", sub[5], ICON_POWER, true);
+        else
+            set_item(&items[5], "Refresh", sub[5], ICON_REFRESH, cfg.host[0] != 0);
         set_item(&items[6], "Unpair", sub[6], ICON_UNLINK, paired);
 
         if (paired)
@@ -893,7 +987,7 @@ static void main_menu(void)
             snprintf(sub[0], 160, "%s", !cfg.host[0] ? "Set the host address first" :
                      server_ok ? "Pair with the host first" : "Host not reachable");
         snprintf(sub[1], 160, "%s", paired ? "Already paired" : "Enter a PIN in Sunshine on your PC");
-        snprintf(sub[2], 160, "%s", cfg.host[0] ? cfg.host : "Not set · search the network or enter it");
+        snprintf(sub[2], 160, "%s", cfg.host[0] ? cfg.host : "Not set \xC2\xB7 search the network or enter it");
         snprintf(sub[3], 160, "%dx%d \xC2\xB7 %d FPS \xC2\xB7 %d Mbps%s", cfg.width, cfg.height, cfg.fps,
                  cfg.bitrate_kbps / 1000, !plat_has_renderer_choice() ? "" :
                  cfg.renderer == RENDERER_GPU ? " \xC2\xB7 GPU" : " \xC2\xB7 CPU");
@@ -901,7 +995,10 @@ static void main_menu(void)
             snprintf(sub[4], 160, "%s is running", running);
         else
             snprintf(sub[4], 160, "Nothing is running");
-        snprintf(sub[5], 160, "Check the host's status again");
+        if (can_wake)
+            snprintf(sub[5], 160, "Send Wake-on-LAN to %s (Y checks again)", cfg.host_mac);
+        else
+            snprintf(sub[5], 160, "Check the host's status again");
         snprintf(sub[6], 160, "Forget this console on the host");
 
         ui_draw_main(&h, items, N_ITEMS, sel, plat_console_ip(), plat_now_ms());
@@ -945,7 +1042,10 @@ static void main_menu(void)
             break;
         }
         case 5:
-            refresh_server();
+            if (can_wake)
+                wake_host();
+            else
+                refresh_server();
             break;
         case 6: {
             bool ok = false;

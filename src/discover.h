@@ -23,6 +23,21 @@ struct discover_progress {
  */
 int discover_hosts(const char *console_ip, char (*out)[16], int max, struct discover_progress *progress);
 
+/* Whether ip accepts a connection on port 47989 within timeout_ms. Unlike a
+ * blocking connect, this gives up quickly on a sleeping PC. */
+bool discover_probe(const char *ip, int timeout_ms);
+
+/* Whether mac is "aa:bb:cc:dd:ee:ff" (and not all zeros, which hosts send
+ * when they won't tell). */
+bool wol_mac_valid(const char *mac);
+
+/*
+ * Sends Wake-on-LAN magic packets for mac: broadcast and to host_ip's /24
+ * broadcast address, on the ports Moonlight's other clients use. Returns
+ * false if nothing could be sent.
+ */
+bool wol_send(const char *mac, const char *host_ip);
+
 #ifdef __cplusplus
 }
 #endif

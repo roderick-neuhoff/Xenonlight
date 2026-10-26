@@ -51,6 +51,8 @@ void config_load(struct config *c)
 
         if (!strcmp(line, "host"))
             snprintf(c->host, sizeof(c->host), "%s", eq + 1);
+        else if (!strcmp(line, "host_mac") && strlen(eq + 1) == 17)
+            memcpy(c->host_mac, eq + 1, 18);
         else if (!strcmp(line, "width"))
             c->width = atoi(eq + 1);
         else if (!strcmp(line, "height"))
@@ -103,6 +105,8 @@ bool config_save(const struct config *c)
     int n = snprintf(buf, sizeof(buf),
         "# Moonlight for Xbox 360\n"
         "host=%s\n"
+        "# learned from the host, for Wake-on-LAN\n"
+        "host_mac=%s\n"
         "width=%d\n"
         "height=%d\n"
         "fps=%d\n"
@@ -119,7 +123,7 @@ bool config_save(const struct config *c)
         "gpu_filter=%d\n"
         "sops=%d\n"
         "local_audio=%d\n",
-        c->host, c->width, c->height, c->fps, c->bitrate_kbps, c->packet_size,
+        c->host, c->host_mac, c->width, c->height, c->fps, c->bitrate_kbps, c->packet_size,
         c->fast_decode, c->renderer == 1 ? "cpu" : c->renderer == 2 ? "cpu_hwcolor" : "gpu",
         c->vsync, c->gpu_filter, c->sops, c->local_audio);
     if (n < 0 || n >= (int)sizeof(buf))

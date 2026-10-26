@@ -5,6 +5,7 @@
 
 struct config {
     char host[64];
+    char host_mac[18];  /* for Wake-on-LAN, learned from the host; "" if unknown */
     int width, height, fps;
     int bitrate_kbps;
     int packet_size;

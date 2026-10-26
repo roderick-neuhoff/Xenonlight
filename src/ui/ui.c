@@ -264,6 +264,12 @@ static void icon(int which, float cx, float cy, float k, uint32_t color)
         cv_ring(&cv, X - K * 0.18f, Y - K * 0.18f, K * 0.48f, K * 0.17f, color);
         cv_line(&cv, X + K * 0.2f, Y + K * 0.2f, X + K * 0.7f, Y + K * 0.7f, K * 0.22f, color);
         break;
+    case ICON_POWER: {
+        struct arc_ctx a = { X, Y + K * 0.05f, K * 0.6f, K * 0.17f, -2.25f, -0.89f };
+        cv_sdf(&cv, X - K, Y - K, 2 * K, 2 * K, arc_sdf, &a, color);
+        cv_line(&cv, X, Y - K * 0.75f, X, Y - K * 0.1f, K * 0.17f, color);
+        break;
+    }
     case ICON_EDIT:
         cv_line(&cv, X - K * 0.3f, Y + K * 0.3f, X + K * 0.5f, Y - K * 0.5f, K * 0.32f, color);
         cv_triangle(&cv, X - K * 0.72f, Y + K * 0.72f, X - K * 0.56f, Y + K * 0.1f, X - K * 0.1f, Y + K * 0.56f, color);

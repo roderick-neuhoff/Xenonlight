@@ -1,6 +1,10 @@
 /*
- * Opus decode and playback through XAudio2 (48 kHz, 16-bit stereo, native
- * big-endian samples). Runs on Moonlight's audio thread.
+ * Opus decode and playback through XAudio2 (48 kHz, 16-bit, native
+ * big-endian samples), stereo or 5.1. Runs on Moonlight's audio thread.
+ *
+ * The 360's mastering voice is always 5.1 (the system downmixes for a stereo
+ * TV), in the same channel order Moonlight's Opus streams decode to:
+ * FL FR FC LFE BL BR. So a 6-channel source voice maps straight through.
  */
 #include "xdk.h"
 
@@ -12,6 +16,7 @@
 #include <opus_multistream.h>
 
 #define MAX_FRAME_SAMPLES 960   /* 20 ms at 48 kHz, the largest Moonlight uses */
+#define MAX_CHANNELS 6
 #define BUFFERS 16
 /* Keep the queue short so audio stays in sync with the picture (~40-80 ms). */
 #define MAX_QUEUED 8
@@ -20,7 +25,8 @@ static IXAudio2 *xaudio;
 static IXAudio2MasteringVoice *master;
 static IXAudio2SourceVoice *voice;
 static OpusMSDecoder *decoder;
-static int16_t pcm[BUFFERS][MAX_FRAME_SAMPLES * 2];
+static int channels;
+static int16_t pcm[BUFFERS][MAX_FRAME_SAMPLES * MAX_CHANNELS];
 static int next_buffer;
 
 static int audio_init(int config, const POPUS_MULTISTREAM_CONFIGURATION opus, void *ctx, int flags)
@@ -31,8 +37,9 @@ static int audio_init(int config, const POPUS_MULTISTREAM_CONFIGURATION opus, vo
     (void)ctx;
     (void)flags;
 
-    if (opus->channelCount != 2)
+    if (opus->channelCount != 2 && opus->channelCount != 6)
         return -1;
+    channels = opus->channelCount;
     decoder = opus_multistream_decoder_create(opus->sampleRate, opus->channelCount, opus->streams,
                                               opus->coupledStreams, opus->mapping, &err);
     if (decoder == NULL)
@@ -50,11 +57,11 @@ static int audio_init(int config, const POPUS_MULTISTREAM_CONFIGURATION opus, vo
 
     ZeroMemory(&wfx, sizeof(wfx));
     wfx.wFormatTag = WAVE_FORMAT_PCM;
-    wfx.nChannels = 2;
+    wfx.nChannels = (WORD)channels;
     wfx.nSamplesPerSec = opus->sampleRate;
     wfx.wBitsPerSample = 16;
-    wfx.nBlockAlign = 4;
-    wfx.nAvgBytesPerSec = opus->sampleRate * 4;
+    wfx.nBlockAlign = (WORD)(channels * 2);
+    wfx.nAvgBytesPerSec = opus->sampleRate * channels * 2;
     if (FAILED(xaudio->CreateSourceVoice(&voice, &wfx))) {
         voice = NULL;
         return -1;
@@ -93,7 +100,7 @@ static void audio_decode_and_play(char *data, int len)
         return;
 
     ZeroMemory(&buf, sizeof(buf));
-    buf.AudioBytes = samples * 2 * sizeof(int16_t);
+    buf.AudioBytes = samples * channels * sizeof(int16_t);
     buf.pAudioData = (const BYTE *)out;
     if (SUCCEEDED(voice->SubmitSourceBuffer(&buf)))
         next_buffer = (next_buffer + 1) % BUFFERS;
@@ -106,4 +113,9 @@ void audio_init_callbacks(AUDIO_RENDERER_CALLBACKS *cb)
     cb->cleanup = audio_cleanup;
     cb->decodeAndPlaySample = audio_decode_and_play;
     cb->capabilities = CAPABILITY_DIRECT_SUBMIT;
+}
+
+bool audio_has_surround(void)
+{
+    return true;
 }

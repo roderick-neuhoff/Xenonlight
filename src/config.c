@@ -83,6 +83,8 @@ void config_load(struct config *c)
             c->local_audio = atoi(eq + 1) != 0;
         else if (!strcmp(line, "overlay"))
             c->overlay = atoi(eq + 1) != 0;
+        else if (!strcmp(line, "surround"))
+            c->surround = atoi(eq + 1) != 0;
     }
     free(text);
 
@@ -126,10 +128,12 @@ bool config_save(const struct config *c)
         "sops=%d\n"
         "local_audio=%d\n"
         "# Dashboard version: performance overlay at stream start (Back+LB+RB+X toggles it)\n"
-        "overlay=%d\n",
+        "overlay=%d\n"
+        "# Dashboard version: 1 = 5.1 surround audio\n"
+        "surround=%d\n",
         c->host, c->host_mac, c->width, c->height, c->fps, c->bitrate_kbps, c->packet_size,
         c->fast_decode, c->renderer == 1 ? "cpu" : c->renderer == 2 ? "cpu_hwcolor" : "gpu",
-        c->vsync, c->gpu_filter, c->sops, c->local_audio, c->overlay);
+        c->vsync, c->gpu_filter, c->sops, c->local_audio, c->overlay, c->surround);
     if (n < 0 || n >= (int)sizeof(buf))
         return false;   /* never write a truncated file */
     return storage_write("moonlight.ini", buf, (size_t)n);

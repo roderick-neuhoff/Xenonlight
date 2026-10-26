@@ -66,6 +66,17 @@ the pointer, the right stick scrolls, **A / B / X** are the left / right / middl
 **Keyboard:** a USB keyboard plugged into the console types on the PC during a stream (US
 layout key codes, with Shift/Ctrl/Alt). The menus still use the controller.
 
+**Performance overlay:** **Back + LB + RB + X** during a stream (the same combo as Moonlight-qt)
+shows or hides a panel in the top-left corner. It shows:
+- frames received and shown per second
+- decode time against the frame budget, in yellow near the limit and red over it
+- render time and bitrate
+- frames dropped because the decoder fell behind
+- packets lost beyond what FEC could repair
+- the network round trip
+
+The game also sees the combo's buttons, as in Moonlight-qt.
+
 ## Settings
 
 Besides the shared ones (resolution, FPS, bitrate, V-Sync, audio; see the main
@@ -85,6 +96,10 @@ Besides the shared ones (resolution, FPS, bitrate, V-Sync, audio; see the main
 
   In every mode the picture is scaled to the TV with a bicubic (Catmull-Rom) filter. With
   *Fast decode* off the decoder deblocks exactly, so GPU deblocking is skipped.
+- **Audio**: *Stereo* (default) or *5.1 surround*. The console's audio output is always 5.1
+  and the dashboard's audio settings mix it down for stereo TVs, so surround needs a
+  receiver over HDMI or optical. Decoding 5.1 costs somewhat more CPU time than stereo.
+- **Performance overlay**: shows the overlay (see above) from the start of every stream.
 - **Decoder benchmark**: the first stream of at least 60 frames is recorded to
   `Moonlight\moonlight\capture.bin` (delete it to record again). The benchmark decodes that
   recording with plain C and with each group of vector code (luma and chroma motion

@@ -570,23 +570,25 @@ void ui_draw_apps(const struct ui_host *host, const struct ui_app *apps, int n, 
 void ui_draw_settings(const struct ui_setting *rows, int n, int sel)
 {
     static const struct hint hints[] = { { "\xE2\x86\x90 \xE2\x86\x92", "Change" }, { "B", "Save & back" } };
-    /* Tighter rows when there are many, so the help text stays clear of the footer. */
-    float x = 64, y = 150, w = W - 128, rh = n > 9 ? 40.0f : n > 8 ? 44.0f : 50.0f;
-    int i;
+    /* Up to 9 rows show at once (tighter when there are many, so the help text stays clear of
+     * the footer); beyond that the list scrolls with the selection. */
+    enum { VISIBLE = 9 };
+    float x = 64, y = 150, w = W - 128, rh = n > 8 ? 44.0f : 50.0f;
+    int i, shown = n < VISIBLE ? n : VISIBLE, first = sel >= VISIBLE ? sel - VISIBLE + 1 : 0;
 
     begin_frame();
     header(NULL);
     text(FONT_BOLD, 28, 64, 128, C_TEXT, "Settings");
 
-    card(x, y, w, rh * n + 16, 16, false);
-    for (i = 0; i < n; i++) {
-        float ry = y + 8 + i * rh;
+    card(x, y, w, rh * shown + 16, 16, false);
+    for (i = first; i < first + shown; i++) {
+        float ry = y + 8 + (i - first) * rh;
         bool on = i == sel;
 
         if (on) {
             rrect(x + 8, ry, w - 16, rh, 10, C_CARD_SEL);
             rrect(x + 8, ry + 10, 4, rh - 20, 2, C_ACCENT);
-        } else if (i > 0) {
+        } else if (i > first) {
             cv_fill(&cv, SI(x + 24), SI(ry), SI(w - 48), 1, WITH_ALPHA(C_BORDER, 200));
         }
         text(FONT_REGULAR, 19, x + 30, ry + rh / 2 + 7, on ? C_TEXT : C_TEXT_DIM, rows[i].label);
@@ -603,9 +605,16 @@ void ui_draw_settings(const struct ui_setting *rows, int n, int sel)
             text_right(FONT_REGULAR, 19, x + w - 30, ry + rh / 2 + 7, C_TEXT_DIM, rows[i].value);
         }
     }
+    /* More rows above/below: small arrows beside the title and under the card. */
+    if (first > 0)
+        cv_triangle(&cv, S(W - 76), S(126), S(W - 64), S(126), S(W - 70), S(118), C_TEXT_DIM);
+    if (first + shown < n) {
+        float by = y + rh * shown + 22;
+        cv_triangle(&cv, S(W - 76), S(by), S(W - 64), S(by), S(W - 70), S(by + 8), C_TEXT_DIM);
+    }
 
     if (sel >= 0 && sel < n && rows[sel].help)
-        wrapped(FONT_REGULAR, 16, x + 4, y + rh * n + 50, w - 8, 22, C_TEXT_DIM, rows[sel].help);
+        wrapped(FONT_REGULAR, 16, x + 4, y + rh * shown + 50, w - 8, 22, C_TEXT_DIM, rows[sel].help);
 
     footer(hints, 2, NULL);
 }

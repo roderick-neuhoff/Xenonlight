@@ -16,6 +16,7 @@ struct config {
     bool sops;          /* let the host change its resolution to match */
     bool local_audio;   /* also play audio on the host PC */
     bool overlay;       /* SDK build: performance overlay on when a stream starts */
+    bool surround;      /* SDK build: ask for 5.1 audio */
 };
 
 /* Finds a writable USB/HDD device and creates <dev>:/moonlight/. */

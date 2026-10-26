@@ -80,3 +80,8 @@ void audio_init_callbacks(AUDIO_RENDERER_CALLBACKS *cb)
     cb->decodeAndPlaySample = audio_decode_and_play;
     cb->capabilities = CAPABILITY_DIRECT_SUBMIT;
 }
+
+bool audio_has_surround(void)
+{
+    return false;   /* the audio DMA ring here is stereo */
+}

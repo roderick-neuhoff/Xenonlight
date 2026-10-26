@@ -144,21 +144,27 @@ int main(int argc, char **argv)
         ui_draw_main(&off, items, 7, 5, "192.168.1.99", 0); shot("13_wake");
     }
     {
-        /* The dashboard build's 10 settings, with the longest help text selected. */
-        struct ui_setting all[10];
+        /* The dashboard build's 11 settings, scrolled down to the overlay row. */
+        struct ui_setting all[11];
         int i;
         for (i = 0; i < 8; i++)
             all[i] = settings[i];
         all[4].label = "GPU picture";
         all[4].value = "Deblock";
-        all[8].label = "Performance overlay";
+        all[7].label = "Audio";
+        all[7].value = "5.1 surround";
+        all[8].label = "Play audio on PC";
         all[8].value = "Off";
-        all[8].help = "Shows decode time, frame rate, bitrate and network round trip over the stream from the "
+        all[8].help = NULL;
+        all[9].label = "Performance overlay";
+        all[9].value = "Off";
+        all[9].help = "Shows decode time, frame rate, bitrate and network round trip over the stream from the "
                       "start. Back + LB + RB + X shows or hides it at any time.";
-        all[9].label = "Decoder benchmark";
-        all[9].value = "Press A";
-        all[9].help = NULL;
-        ui_draw_settings(all, 10, 8); shot("14_settings_10");
+        all[10].label = "Decoder benchmark";
+        all[10].value = "Press A";
+        all[10].help = NULL;
+        ui_draw_settings(all, 11, 9); shot("14_settings_scroll");
+        ui_draw_settings(all, 11, 0); shot("14_settings_top");
     }
     {
         /* Overlay over a stand-in frame, blended at 0.85 like GFX_SHADER_OVERLAY. */

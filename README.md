@@ -40,6 +40,9 @@ Get the latest build from [Releases](../../releases):
    PC is asleep or off, *Refresh* turns into *Wake PC*, which sends Wake-on-LAN and waits up to a
    minute for it to come up. Wake-on-LAN must be enabled on the PC (BIOS and network adapter),
    and it usually needs Ethernet.
+7. Dashboard version: **Back + LB + RB + X** during a stream shows a **performance overlay**
+   (decode time, frame rate, bitrate, network round trip). *Settings → Audio* switches to
+   **5.1 surround**.
 
 Tips: 720p30 at 5–8 Mbps is the sweet spot. In Sunshine (*Configuration → NVIDIA NVENC*),
 **"Prefer CAVLC over CABAC"** makes decoding cheaper. The stats screen after each stream shows
@@ -157,7 +160,7 @@ descriptors (`scripts/build-deps.sh` patches libxenon) so video bursts don't ove
 ## Known limitations
 
 - **H.264 only.** No HEVC/AV1 (not enough CPU), and no HDR.
-- **Stereo only.**
+- **Stereo only** (the dashboard version also does 5.1).
 - **No server certificate pinning.** HTTPS to the host doesn't verify the host's certificate.
 - **Entropy** comes from CPU timing jitter. libxenon exposes no hardware RNG.
 - **No FFmpeg AltiVec.** Xenon's VMX128 lacks the integer multiply/sum instructions FFmpeg's

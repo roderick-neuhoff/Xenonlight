@@ -315,7 +315,7 @@ static bool edit_ip(char *ip, size_t len)
 
 static const int resolutions[][2] = { { 854, 480 }, { 1280, 720 }, { 1920, 1080 } };
 
-enum { SET_RES, SET_FPS, SET_BITRATE, SET_FAST, SET_RENDERER, SET_VSYNC, SET_GPU, SET_SOPS, SET_AUDIO, SET_OVERLAY, SET_BENCH,
+enum { SET_RES, SET_FPS, SET_BITRATE, SET_FAST, SET_RENDERER, SET_VSYNC, SET_GPU, SET_SOPS, SET_SURROUND, SET_AUDIO, SET_OVERLAY, SET_BENCH,
        SET_COUNT };
 
 static const char *gpu_filter_names[3] = { "Off", "Deblock", "Deblock + sharpen" };
@@ -327,7 +327,7 @@ static void settings_menu(void)
     for (;;) {
         static const char *labels[SET_COUNT] = {
             "Resolution", "Frame rate", "Bitrate", "Fast decode", "Renderer", "V-Sync", "GPU picture",
-            "Optimize game settings", "Play audio on PC", "Performance overlay", "Decoder benchmark",
+            "Optimize game settings", "Audio", "Play audio on PC", "Performance overlay", "Decoder benchmark",
         };
         static const char *helps[SET_COUNT] = {
             "The host renders and encodes at this size. 854x480 decodes about twice as fast as "
@@ -341,6 +341,8 @@ static void settings_menu(void)
             "With fast decode, the GPU smooths the block edges the decoder skipped, at no CPU cost. "
             "Sharpen also crisps up lower resolutions when they're scaled to the TV.",
             "Lets the host change its resolution and game settings to match the stream.",
+            "5.1 surround needs a receiver or TV that takes it over HDMI or optical; the console mixes "
+            "it down for stereo TVs. It costs a little more CPU time than stereo.",
             "Also play the game's audio on the host PC's speakers.",
             "Shows decode time, frame rate, bitrate and network round trip over the stream from the start. "
             "Back + LB + RB + X shows or hides it at any time.",
@@ -365,6 +367,7 @@ static void settings_menu(void)
         snprintf(val[SET_GPU], 48, "%s", gpu_filter_names[cfg.gpu_filter >= 0 && cfg.gpu_filter <= 2 ? cfg.gpu_filter : 1]);
         snprintf(val[SET_SOPS], 48, "%s", cfg.sops ? "On" : "Off");
         snprintf(val[SET_AUDIO], 48, "%s", cfg.local_audio ? "On" : "Off");
+        snprintf(val[SET_SURROUND], 48, "%s", cfg.surround ? "5.1 surround" : "Stereo");
         snprintf(val[SET_OVERLAY], 48, "%s", cfg.overlay ? "On" : "Off");
         snprintf(val[SET_BENCH], 48, "Press A");
 
@@ -376,6 +379,8 @@ static void settings_menu(void)
             if (i == SET_GPU && !plat_has_gpu_filter())
                 continue;
             if (i == SET_OVERLAY && !video_has_overlay())
+                continue;
+            if (i == SET_SURROUND && !audio_has_surround())
                 continue;
             rows[n].label = labels[i];
             rows[n].value = val[i];
@@ -412,6 +417,7 @@ static void settings_menu(void)
             case SET_SOPS: cfg.sops = !cfg.sops; break;
             case SET_AUDIO: cfg.local_audio = !cfg.local_audio; break;
             case SET_OVERLAY: cfg.overlay = !cfg.overlay; break;
+            case SET_SURROUND: cfg.surround = !cfg.surround; break;
             case SET_BENCH:
                 if (b & A_FLAG)
                     plat_run_benchmark();
@@ -705,7 +711,8 @@ static void stream(int app_id, const char *app_title)
     lj.sc.bitrate = cfg.bitrate_kbps;
     lj.sc.packetSize = cfg.packet_size;
     lj.sc.streamingRemotely = STREAM_CFG_AUTO;
-    lj.sc.audioConfiguration = AUDIO_CONFIGURATION_STEREO;
+    lj.sc.audioConfiguration = cfg.surround && audio_has_surround() ? AUDIO_CONFIGURATION_51_SURROUND
+                                                                     : AUDIO_CONFIGURATION_STEREO;
     lj.sc.supportedVideoFormats = VIDEO_FORMAT_H264;
     lj.sc.clientRefreshRateX100 = 6000;
     lj.sc.colorSpace = COLORSPACE_REC_601;

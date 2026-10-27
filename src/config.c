@@ -18,7 +18,6 @@ void config_defaults(struct config *c)
     c->gpu_filter = 1;
     c->sops = true;
     c->local_audio = false;
-    c->decode_threads = 5;
 }
 
 static void trim(char *s)
@@ -86,8 +85,6 @@ void config_load(struct config *c)
             c->overlay = atoi(eq + 1) != 0;
         else if (!strcmp(line, "surround"))
             c->surround = atoi(eq + 1) != 0;
-        else if (!strcmp(line, "decode_threads"))
-            c->decode_threads = atoi(eq + 1);
     }
     free(text);
 
@@ -104,8 +101,6 @@ void config_load(struct config *c)
         c->packet_size = 1392;
     if (c->gpu_filter < 0 || c->gpu_filter > 2)
         c->gpu_filter = 1;
-    if (c->decode_threads < 4 || c->decode_threads > 6)
-        c->decode_threads = 5;
 }
 
 bool config_save(const struct config *c)
@@ -135,12 +130,10 @@ bool config_save(const struct config *c)
         "# Dashboard version: performance overlay at stream start (Back+LB+RB+X toggles it)\n"
         "overlay=%d\n"
         "# Dashboard version: 1 = 5.1 surround audio\n"
-        "surround=%d\n"
-        "# Dashboard version: slices per frame decoded in parallel, 4-6\n"
-        "decode_threads=%d\n",
+        "surround=%d\n",
         c->host, c->host_mac, c->width, c->height, c->fps, c->bitrate_kbps, c->packet_size,
         c->fast_decode, c->renderer == 1 ? "cpu" : c->renderer == 2 ? "cpu_hwcolor" : "gpu",
-        c->vsync, c->gpu_filter, c->sops, c->local_audio, c->overlay, c->surround, c->decode_threads);
+        c->vsync, c->gpu_filter, c->sops, c->local_audio, c->overlay, c->surround);
     if (n < 0 || n >= (int)sizeof(buf))
         return false;   /* never write a truncated file */
     return storage_write("moonlight.ini", buf, (size_t)n);

@@ -64,13 +64,6 @@ HOOK_FIXUPS += [
 ]
 
 
-# Slice workers 0-4 go on hardware threads 1-5 as before; a sixth worker wraps
-# around to thread 0 instead of asking for a thread 6 that doesn't exist.
-HOOK_FIXUPS += [
-    ("libavcodec/xb_thread.c", "#define hw_thread(x) (x+1)\n", "#define hw_thread(x) (((x) + 1) % 6)\n"),
-]
-
-
 def apply_fixups(fixups):
     """Applies exact text replacements to FFmpeg's sources; already-applied ones are skipped."""
     for rel, old, new in fixups:

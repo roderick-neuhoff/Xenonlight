@@ -16,7 +16,6 @@ struct video_options {
     int renderer;       /* enum video_renderer */
     bool vsync;         /* GPU renderer: flip on vertical blank (no tearing) */
     int gpu_filter;     /* SDK build: 0 off, 1 GPU deblocking, 2 deblocking + sharpening */
-    int decode_threads; /* SDK build: slices per frame = FFmpeg slice threads (4-6) */
 };
 
 const char *video_renderer_name(int renderer);

@@ -313,23 +313,9 @@ static bool edit_ip(char *ip, size_t len)
 
 /* ------------------------------------------------------------ settings */
 
-/* Hands the settings the video code reads to it (before a stream or the benchmark). */
-static void apply_video_options(void)
-{
-    struct video_options vo;
-
-    memset(&vo, 0, sizeof(vo));
-    vo.fast_decode = cfg.fast_decode;
-    vo.renderer = cfg.renderer;
-    vo.vsync = cfg.vsync;
-    vo.gpu_filter = cfg.gpu_filter;
-    vo.decode_threads = cfg.decode_threads;
-    video_set_options(&vo);
-}
-
 static const int resolutions[][2] = { { 854, 480 }, { 1280, 720 }, { 1920, 1080 } };
 
-enum { SET_RES, SET_FPS, SET_BITRATE, SET_FAST, SET_THREADS, SET_RENDERER, SET_VSYNC, SET_GPU, SET_SOPS, SET_SURROUND, SET_AUDIO, SET_OVERLAY, SET_BENCH,
+enum { SET_RES, SET_FPS, SET_BITRATE, SET_FAST, SET_RENDERER, SET_VSYNC, SET_GPU, SET_SOPS, SET_SURROUND, SET_AUDIO, SET_OVERLAY, SET_BENCH,
        SET_COUNT };
 
 static const char *gpu_filter_names[3] = { "Off", "Deblock", "Deblock + sharpen" };
@@ -340,7 +326,7 @@ static void settings_menu(void)
 
     for (;;) {
         static const char *labels[SET_COUNT] = {
-            "Resolution", "Frame rate", "Bitrate", "Fast decode", "Decoder threads", "Renderer", "V-Sync", "GPU picture",
+            "Resolution", "Frame rate", "Bitrate", "Fast decode", "Renderer", "V-Sync", "GPU picture",
             "Optimize game settings", "Audio", "Play audio on PC", "Performance overlay", "Decoder benchmark",
         };
         static const char *helps[SET_COUNT] = {
@@ -349,9 +335,6 @@ static void settings_menu(void)
             "30 FPS is the reliable choice. 60 FPS needs fast decode and a low resolution or bitrate.",
             "Higher looks better but costs decode time. 5-8 Mbps suits 720p.",
             "Skips H.264's deblocking filter: much faster, slightly blockier picture.",
-            "The host splits each frame into this many slices, which the console decodes at the same time. "
-            "6 also uses the thread that runs the network and audio; compare decode times in the "
-            "performance overlay.",
             "GPU: the Xenos GPU converts and scales each frame (fastest). CPU modes are fallbacks if "
             "the GPU path misbehaves.",
             "Wait for the TV's refresh before showing a frame (no tearing). Off gives slightly lower latency.",
@@ -378,7 +361,6 @@ static void settings_menu(void)
         snprintf(val[SET_FPS], 48, "%d FPS", cfg.fps);
         snprintf(val[SET_BITRATE], 48, "%d Mbps", cfg.bitrate_kbps / 1000);
         snprintf(val[SET_FAST], 48, "%s", cfg.fast_decode ? "On" : "Off");
-        snprintf(val[SET_THREADS], 48, "%d%s", cfg.decode_threads, cfg.decode_threads == 5 ? " (default)" : "");
         snprintf(val[SET_RENDERER], 48, "%s", cfg.renderer == RENDERER_GPU ? "GPU" :
                  cfg.renderer == RENDERER_CPU ? "CPU" : "CPU + colour matrix");
         snprintf(val[SET_VSYNC], 48, "%s", cfg.vsync ? "On" : "Off");
@@ -395,8 +377,6 @@ static void settings_menu(void)
             if (i == SET_BENCH && !plat_benchmark_available())
                 continue;
             if (i == SET_GPU && !plat_has_gpu_filter())
-                continue;
-            if (i == SET_THREADS && !plat_has_thread_choice())
                 continue;
             if (i == SET_OVERLAY && !video_has_overlay())
                 continue;
@@ -431,7 +411,6 @@ static void settings_menu(void)
                 if (cfg.bitrate_kbps > 30000) cfg.bitrate_kbps = 30000;
                 break;
             case SET_FAST: cfg.fast_decode = !cfg.fast_decode; break;
-            case SET_THREADS: cfg.decode_threads = 4 + (cfg.decode_threads - 4 + d + 3) % 3; break;
             case SET_RENDERER: cfg.renderer = (cfg.renderer + d + RENDERER_COUNT) % RENDERER_COUNT; break;
             case SET_VSYNC: cfg.vsync = !cfg.vsync; break;
             case SET_GPU: cfg.gpu_filter = (cfg.gpu_filter + d + 3) % 3; break;
@@ -440,10 +419,8 @@ static void settings_menu(void)
             case SET_OVERLAY: cfg.overlay = !cfg.overlay; break;
             case SET_SURROUND: cfg.surround = !cfg.surround; break;
             case SET_BENCH:
-                if (b & A_FLAG) {
-                    apply_video_options();   /* the benchmark uses the thread count */
+                if (b & A_FLAG)
                     plat_run_benchmark();
-                }
                 break;
             }
         }
@@ -721,6 +698,7 @@ static void stream(int app_id, const char *app_title)
     CONNECTION_LISTENER_CALLBACKS cl;
     DECODER_RENDERER_CALLBACKS dr;
     AUDIO_RENDERER_CALLBACKS ar;
+    struct video_options vo;
     struct overlay ov;
     char title[128], msg[200];
 
@@ -756,7 +734,12 @@ static void stream(int app_id, const char *app_title)
     cl.connectionTerminated = cl_connection_terminated;
     cl.logMessage = cl_log;
     cl.rumble = input_rumble;
-    apply_video_options();
+    memset(&vo, 0, sizeof(vo));
+    vo.fast_decode = cfg.fast_decode;
+    vo.renderer = cfg.renderer;
+    vo.vsync = cfg.vsync;
+    vo.gpu_filter = cfg.gpu_filter;
+    video_set_options(&vo);
     video_init_callbacks(&dr);
     audio_init_callbacks(&ar);
 

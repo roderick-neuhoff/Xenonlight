@@ -37,15 +37,8 @@ int ptw32_processInitialize(void);
 }
 
 #define FRAME_SLOTS      3
-/*
- * Slice threads = slices per frame (FFmpeg decodes slices in batches of one per
- * thread, so extra slices wouldn't run in parallel). xb_thread.c puts worker i
- * on hardware thread (i + 1) % 6: 4 threads use 1-4; 5 adds thread 5, which
- * otherwise only presents frames and mixes audio; 6 adds thread 0 (network,
- * audio decode, this decoder thread, which waits while the workers run).
- */
-#define MIN_THREADS 4
-#define MAX_THREADS_HW 6
+#define DECODE_THREADS   4   /* xb_thread.c puts worker i on hardware thread i + 1 */
+#define SLICES_PER_FRAME 4
 #define STATS_INTERVAL_MS 2000
 
 #define CAPTURE_FILE     "capture.bin"
@@ -57,7 +50,7 @@ struct staging {
     uint8_t *qp;            /* QP of each macroblock, for GPU deblocking */
 };
 
-static struct video_options options = { true, RENDERER_GPU, true, 1, 5 };
+static struct video_options options = { true, RENDERER_GPU, true, 1 };
 static struct video_stats stats;
 
 static AVCodecContext *codec_ctx;
@@ -131,13 +124,6 @@ const char *video_renderer_name(int renderer)
 void video_set_options(const struct video_options *opts)
 {
     options = *opts;
-}
-
-static int decode_threads(void)
-{
-    if (options.decode_threads < MIN_THREADS || options.decode_threads > MAX_THREADS_HW)
-        return 5;
-    return options.decode_threads;
 }
 
 void video_get_display_size(int *w, int *h)
@@ -292,8 +278,8 @@ static AVCodecContext *open_h264(int width, int height, int threads, bool fast_d
         return NULL;
     c->flags |= CODEC_FLAG_LOW_DELAY;
     c->flags2 |= CODEC_FLAG2_FAST;
-    /* The host sends one slice per thread (see capabilities), which the
-     * worker threads decode in parallel. No added latency. */
+    /* The host sends SLICES_PER_FRAME slices per frame (see capabilities),
+     * which the worker threads decode in parallel. No added latency. */
     c->thread_type = FF_THREAD_SLICE;
     c->thread_count = threads;
     c->width = width;
@@ -645,7 +631,7 @@ static int video_setup(int format, int width, int height, int fps, void *ctx, in
     chroma_h = (height + 1) / 2;
 
     vlog("video: setup %dx%d, format 0x%x, vmx flags %d\n", width, height, format, ff_xbox_vmx_flags);
-    codec_ctx = open_h264(width, height, decode_threads(), options.fast_decode);
+    codec_ctx = open_h264(width, height, DECODE_THREADS, options.fast_decode);
     dec_frame = avcodec_alloc_frame();
     if (codec_ctx == NULL || dec_frame == NULL) {
         vlog("video: couldn't open the decoder\n");
@@ -690,9 +676,6 @@ static void video_start(void)
     render_thread = CreateThread(NULL, 64 * 1024, render_main, NULL, CREATE_SUSPENDED, NULL);
     if (render_thread) {
         XSetThreadProcessor(render_thread, HW_THREAD_RENDER);
-        /* A slice worker may share this hardware thread (5 or 6 decoder
-         * threads); a finished frame shouldn't wait for its time slice. */
-        SetThreadPriority(render_thread, THREAD_PRIORITY_ABOVE_NORMAL);
         ResumeThread(render_thread);
     }
 }
@@ -777,29 +760,22 @@ void video_init_callbacks(DECODER_RENDERER_CALLBACKS *cb)
     cb->cleanup = video_cleanup;
     cb->submitDecodeUnit = video_submit;
     /* No direct submit: Moonlight's own decoder thread calls video_submit. */
-    cb->capabilities = CAPABILITY_SLICES_PER_FRAME(decode_threads());
+    cb->capabilities = CAPABILITY_SLICES_PER_FRAME(SLICES_PER_FRAME);
 }
 
 /* ---------------------------------------------------- benchmark */
 
-/* threads 0 = the "Decoder threads" setting. The rows with a fixed count only
- * run when the recording has that many slices per frame and it isn't the
- * setting already (with fewer slices, extra threads have nothing to do). */
 static const struct {
     const char *name;
     int flags;
-    int threads;
 } bench_configs[] = {
-    { "Plain C", 0, 0 },
-    { "Vector luma motion comp.", XVMX_QPEL, 0 },
-    { "Vector chroma motion comp.", XVMX_CHROMA, 0 },
-    { "Prefetch", XVMX_PREFETCH, 0 },
-    { "Vector inverse transform", XVMX_IDCT, 0 },
-    { "All vector code", XVMX_ALL, 0 },
-    { "All vector code, 4 threads", XVMX_ALL, 4 },
-    { "All vector code, 5 threads", XVMX_ALL, 5 },
-    { "All vector code, 6 threads", XVMX_ALL, 6 },
-    { "Plain C (again)", 0, 0 },
+    { "Plain C", 0 },
+    { "Vector luma motion comp.", XVMX_QPEL },
+    { "Vector chroma motion comp.", XVMX_CHROMA },
+    { "Prefetch", XVMX_PREFETCH },
+    { "Vector inverse transform", XVMX_IDCT },
+    { "All vector code", XVMX_ALL },
+    { "Plain C (again)", 0 },
 };
 #define BENCH_RUNS (sizeof(bench_configs) / sizeof(bench_configs[0]))
 
@@ -810,8 +786,6 @@ struct bench {
     uint32_t *ref_hash;         /* per frame, from the first (C) run */
     volatile int run;           /* configuration in progress */
     volatile int frame;
-    int slices;                 /* per frame in the recording */
-    bool skip[BENCH_RUNS];
     double ms[BENCH_RUNS], worst_ms[BENCH_RUNS];
     uint32_t mismatches[BENCH_RUNS], decoded[BENCH_RUNS];
     volatile bool done;
@@ -846,7 +820,7 @@ static void bench_run(struct bench *b, int run)
     uint32_t i, out = 0;
 
     ff_xbox_vmx_flags = bench_configs[run].flags;
-    c = open_h264(b->w, b->h, bench_configs[run].threads ? bench_configs[run].threads : decode_threads(), true);
+    c = open_h264(b->w, b->h, DECODE_THREADS, true);
     if (c == NULL || frame == NULL || buf == NULL) {
         close_h264(&c);
         if (frame)
@@ -906,31 +880,12 @@ static DWORD WINAPI bench_main(LPVOID arg)
     int saved = ff_xbox_vmx_flags, run;
 
     for (run = 0; run < (int)BENCH_RUNS; run++) {
-        if (b->skip[run])
-            continue;
         b->run = run;
         bench_run(b, run);
     }
     ff_xbox_vmx_flags = saved;
     b->done = true;
     return 0;
-}
-
-/* Slices (NAL types 1 and 5) in one Annex B access unit. */
-static int count_slices(const uint8_t *p, uint32_t len)
-{
-    uint32_t i;
-    int n = 0;
-
-    for (i = 0; i + 3 < len; i++) {
-        if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1) {
-            int type = p[i + 3] & 0x1F;
-            if (type == 1 || type == 5)
-                n++;
-            i += 2;
-        }
-    }
-    return n;
 }
 
 bool plat_benchmark_available(void)
@@ -949,7 +904,7 @@ void plat_run_benchmark(void)
     struct ui_stat rows[BENCH_RUNS + 1];
     HANDLE th;
     size_t len = 0;
-    char msg[480];
+    char msg[320];
     int i, n = 0;
 
     memset(&b, 0, sizeof(b));
@@ -973,18 +928,7 @@ void plat_run_benchmark(void)
         free(b.data);
         return;
     }
-    {
-        uint32_t first;
-
-        memcpy(&first, b.data + 16, 4);
-        if (len >= 20 && first <= len - 20)
-            b.slices = count_slices(b.data + 20, first);
-    }
-    for (i = 0; i < (int)BENCH_RUNS; i++) {
-        int t = bench_configs[i].threads;
-        b.skip[i] = t != 0 && (t == decode_threads() || t > b.slices);
-    }
-    vlog("bench: %ux%u, %u frames, threads %d\n", b.w, b.h, b.frames, decode_threads());
+    vlog("bench: %ux%u, %u frames, threads %d\n", b.w, b.h, b.frames, DECODE_THREADS);
 
     th = CreateThread(NULL, 256 * 1024, bench_main, &b, CREATE_SUSPENDED, NULL);
     XSetThreadProcessor(th, 0);
@@ -1000,19 +944,14 @@ void plat_run_benchmark(void)
     CloseHandle(th);
 
     for (i = 0; i < (int)BENCH_RUNS; i++) {
-        if (b.skip[i])
-            continue;
         rows[n].label = bench_configs[i].name;
         _snprintf(rows[n].value, sizeof(rows[n].value), "%.2f ms%s", b.ms[i],
                   b.mismatches[i] ? " (picture differs!)" : "");
         rows[n].value[sizeof(rows[n].value) - 1] = '\0';
         n++;
     }
-    _snprintf(msg, sizeof(msg), "Average decode time per frame over %u recorded frames (%ux%u, %d slices, "
-              "%d threads). Under 33 ms keeps up with 30 FPS, under 16.7 ms with 60 FPS.%s", b.frames, b.w, b.h,
-              b.slices, decode_threads(), b.slices < decode_threads() ?
-              " This recording has fewer slices than threads: delete capture.bin and stream again to measure "
-              "the extra threads." : "");
+    _snprintf(msg, sizeof(msg), "Average decode time per frame over %u recorded frames (%ux%u, %d threads). "
+              "Under 33 ms keeps up with 30 FPS, under 16.7 ms with 60 FPS.", b.frames, b.w, b.h, DECODE_THREADS);
     msg[sizeof(msg) - 1] = '\0';
     ui_draw_stats("Decoder benchmark", rows, n, msg);
     ui_present();

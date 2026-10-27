@@ -175,14 +175,6 @@ static void *refresh_task(void *arg)
     (void)arg;
     gs_server_free(&server);
     memset(&server, 0, sizeof(server));
-    /* A sleeping or switched-off PC would keep a blocking connect waiting
-     * for many seconds (minutes on lwIP); a short probe answers quickly. */
-    if (!discover_probe(cfg.host, 2000)) {
-        server_ok = false;
-        snprintf(server_error, sizeof(server_error),
-                 "No answer from %s. Is the PC on, and is Sunshine running?", cfg.host);
-        return NULL;
-    }
     server_ok = gs_server_info(&server, cfg.host);
     if (!server_ok)
         snprintf(server_error, sizeof(server_error), "%s", gs_error());

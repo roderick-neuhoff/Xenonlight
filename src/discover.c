@@ -107,18 +107,24 @@ static int probe_start(uint32_t prefix, unsigned int host)
     return fd;
 }
 
+/* Called once select() reported fd writable and not in the exception set. */
 static bool connect_succeeded(int fd)
 {
-    int err = 0;
 #ifdef _XBOX
-    int len = sizeof(err);
+    /* The Xbox 360's Winsock has no SO_ERROR (getsockopt fails, so asking would
+     * call every host unreachable). Like desktop Winsock it reports a failed
+     * connect through select()'s exception set, which the callers checked;
+     * see the same note in moonlight-common-c's connectTcpSocket. */
+    (void)fd;
+    return true;
 #else
+    int err = 0;
     socklen_t len = sizeof(err);
-#endif
 
     if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&err, &len) != 0)
         return false;
     return err == 0;
+#endif
 }
 
 int discover_hosts(const char *console_ip, char (*out)[16], int max, struct discover_progress *progress)

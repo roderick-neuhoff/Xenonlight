@@ -5,6 +5,11 @@ from your PC running [Sunshine](https://github.com/LizardByte/Sunshine) (or GeFo
 an RGH/JTAG Xbox 360, with a controller-friendly UI, box art, pairing and on-console stats.
 
 > **Status: experimental.** Pairing and 720p30 streaming work on real hardware with Sunshine.
+>
+> **v0.2.0 is in the testing phase.** It adds finding PCs on the network, Wake-on-LAN, a
+> performance overlay, 5.1 surround, mouse and keyboard input and faster (VMX) decoding. Most
+> of that has only been tried briefly on real hardware. If something breaks, v0.1.0 is still
+> on the [Releases](../../releases) page; please report problems as an issue.
 
 ## Two versions
 

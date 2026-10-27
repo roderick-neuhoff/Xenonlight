@@ -583,6 +583,10 @@ static void free_resources(void)
         slots[i].qp = NULL;
     }
     d = gfx_begin();
+    /* The GPU may still be running the last frame (at 1080p two deblocking passes
+     * resolving into deblock_tex, then the scaling pass): releasing the textures
+     * and render target under it lets it write into freed memory. */
+    d->BlockUntilIdle();
     free_overlay(d);
     for (i = 0; i < 2; i++) {
         for (k = 0; k < 3; k++) {

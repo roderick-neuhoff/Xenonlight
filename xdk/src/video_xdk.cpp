@@ -569,6 +569,7 @@ static void free_resources(void)
     D3DDevice *d;
     int i, k;
 
+    vlog("video: freeing the decoder\n");
     close_h264(&codec_ctx);
     if (dec_frame)
         avcodec_free_frame(&dec_frame);
@@ -582,6 +583,7 @@ static void free_resources(void)
         free(slots[i].qp);
         slots[i].qp = NULL;
     }
+    vlog("video: waiting for the GPU\n");
     d = gfx_begin();
     /* The GPU may still be running the last frame (at 1080p two deblocking passes
      * resolving into deblock_tex, then the scaling pass): releasing the textures
@@ -608,6 +610,7 @@ static void free_resources(void)
     deblock_rt = back_buffer = NULL;
     gpu_deblock = false;
     gfx_end();
+    vlog("video: freed\n");
 }
 
 static int video_setup(int format, int width, int height, int fps, void *ctx, int dr_flags)
@@ -686,6 +689,7 @@ static void video_start(void)
 
 static void video_stop(void)
 {
+    vlog("video: stopping the renderer\n");
     running = false;
     if (render_thread) {
         SetEvent(frame_event);
@@ -693,6 +697,7 @@ static void video_stop(void)
         CloseHandle(render_thread);
         render_thread = NULL;
     }
+    vlog("video: renderer stopped\n");
 }
 
 static void video_cleanup(void)

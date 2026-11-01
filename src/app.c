@@ -760,12 +760,17 @@ static void stream(int app_id, const char *app_title)
         overlay_tick(&ov);
         plat_sleep_ms(50);
     }
+    /* Each step of leaving is logged: after a crash, the last line says where. */
+    cl_log("stream: leaving (%s)\n", connection_terminated ? "connection ended" : "quit combo");
     overlay_end(&ov);
     input_stream_stop();
+    cl_log("stream: input stopped, stopping the connection\n");
     LiStopConnection();
+    cl_log("stream: connection stopped, showing the stats\n");
     ui_suspended = false;
 
     show_stream_stats();
+    cl_log("stream: back in the menus\n");
 }
 
 /* ------------------------------------------------------------ apps */

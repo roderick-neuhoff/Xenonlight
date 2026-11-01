@@ -103,14 +103,22 @@ bool plat_has_gpu_filter(void)
 }
 
 /* Debug log: each line is broadcast as one UDP datagram to port 47555 on the
- * LAN, so xdk/scripts/log_listener.py on the PC can show it live. */
+ * LAN, so xdk/scripts/log_listener.py on the PC can show it live. It also
+ * goes to game:\moonlight\log.txt (new each start), so testers without the
+ * listener can attach it; every line is flushed to the drive, so the file
+ * survives a crash. */
 #define LOG_PORT 47555
+#define LOG_FILE_MAX (2 * 1024 * 1024)
 static SOCKET log_sock = INVALID_SOCKET;
+static HANDLE log_file = INVALID_HANDLE_VALUE;
+static DWORD log_file_size;
+static CRITICAL_SECTION log_lock;
 
 static void log_init(void)
 {
     BOOL on = TRUE;
 
+    InitializeCriticalSection(&log_lock);
     log_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (log_sock != INVALID_SOCKET)
         setsockopt(log_sock, SOL_SOCKET, SO_BROADCAST, (const char *)&on, sizeof(on));
@@ -122,16 +130,26 @@ void plat_log(const char *line)
     char buf[600];
     int n;
 
-    if (log_sock == INVALID_SOCKET)
-        return;
     n = snprintf(buf, sizeof(buf), "%8lu %s", GetTickCount(), line);
-    if (n > (int)sizeof(buf) - 1)
+    if (n < 0 || n > (int)sizeof(buf) - 1)
         n = (int)sizeof(buf) - 1;
-    memset(&to, 0, sizeof(to));
-    to.sin_family = AF_INET;
-    to.sin_port = htons(LOG_PORT);
-    to.sin_addr.s_addr = INADDR_BROADCAST;
-    sendto(log_sock, buf, n, 0, (const struct sockaddr *)&to, sizeof(to));
+    if (log_sock != INVALID_SOCKET) {
+        memset(&to, 0, sizeof(to));
+        to.sin_family = AF_INET;
+        to.sin_port = htons(LOG_PORT);
+        to.sin_addr.s_addr = INADDR_BROADCAST;
+        sendto(log_sock, buf, n, 0, (const struct sockaddr *)&to, sizeof(to));
+    }
+    if (log_file != INVALID_HANDLE_VALUE && log_file_size < LOG_FILE_MAX) {
+        DWORD written = 0;
+
+        /* Several threads log; keep their lines whole. */
+        EnterCriticalSection(&log_lock);
+        if (WriteFile(log_file, buf, (DWORD)n, &written, NULL))
+            log_file_size += written;
+        FlushFileBuffers(log_file);   /* on the drive before a crash can lose it */
+        LeaveCriticalSection(&log_lock);
+    }
 }
 
 /* ------------------------------------------------------------ storage */
@@ -253,6 +271,16 @@ static bool network_init(void)
     return true;
 }
 
+/* After storage_init(): from here on log lines also go to the file. */
+static void log_file_open(void)
+{
+    char path[160];
+
+    snprintf(path, sizeof(path), "%s\\log.txt", storage_root);
+    log_file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    log_file_size = 0;
+}
+
 void __cdecl main()
 {
     if (!gfx_init())
@@ -267,8 +295,11 @@ void __cdecl main()
               "network settings, then start Moonlight again.");
 
     log_init();
-    plat_log("Moonlight (Xbox 360 SDK build) started\n");
-    if (!storage_init())
+    if (storage_init())
+        log_file_open();
+    plat_log("Xenonlight " XENONLIGHT_VERSION " (Xbox 360 SDK build) started\n");
+    plat_log(log_file != INVALID_HANDLE_VALUE ? "Log file: game:\\moonlight\\log.txt\n" : "Log file: couldn't create it\n");
+    if (!storage_ok)
         plat_log("Storage: game:\\moonlight isn't writable; settings won't be saved\n");
     video_xdk_init();
     app_main();

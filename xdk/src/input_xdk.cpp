@@ -9,9 +9,11 @@
  */
 #include "xdk.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "../../src/input.h"
+#include "../../src/platform.h"
 
 #include <Limelight.h>
 
@@ -23,6 +25,30 @@ static int menu_prev;
 static volatile bool stream_active;
 static volatile bool quit_requested;
 static volatile int overlay_toggles;
+
+/* Controller events sent to the host this stream, for the debug log. */
+static unsigned pad_events, pad_event_failures;
+static int pad_first_error;
+
+static void ilog(const char *fmt, int a, int b, int c)
+{
+    char line[160];
+
+    _snprintf(line, sizeof(line), fmt, a, b, c);
+    line[sizeof(line) - 1] = '\0';
+    plat_log(line);
+}
+
+/* LiSendMultiControllerEvent, counting failures for the log. */
+static void send_pad(short i, short mask, int buttons, unsigned char lt, unsigned char rt,
+                     short lx, short ly, short rx, short ry)
+{
+    int r = LiSendMultiControllerEvent(i, mask, buttons, lt, rt, lx, ly, rx, ry);
+
+    pad_events++;
+    if (r != 0 && pad_event_failures++ == 0)
+        pad_first_error = r;
+}
 static HANDLE stream_thread;
 
 static const struct {
@@ -259,10 +285,14 @@ static DWORD WINAPI input_stream_main(LPVOID arg)
 {
     struct pad pads[MAX_PADS], last[MAX_PADS];
     struct mouse_pad mouse[MAX_PADS];
-    bool announced[MAX_PADS] = { false }, overlay_held[MAX_PADS] = { false };
-    DWORD prev = GetTickCount();
+    bool announced[MAX_PADS] = { false }, overlay_held[MAX_PADS] = { false }, any_pad = false;
+    DWORD prev = GetTickCount(), started = prev;
     int i;
     (void)arg;
+
+    pad_events = pad_event_failures = 0;
+    pad_first_error = 0;
+    plat_log("input: stream input started\n");
 
     memset(last, 0, sizeof(last));
     memset(mouse, 0, sizeof(mouse));
@@ -281,10 +311,11 @@ static DWORD WINAPI input_stream_main(LPVOID arg)
             if (!p->present)
                 continue;
             if (!announced[i]) {
-                LiSendControllerArrivalEvent((uint8_t)i, (uint16_t)mask, LI_CTYPE_XBOX,
+                int r = LiSendControllerArrivalEvent((uint8_t)i, (uint16_t)mask, LI_CTYPE_XBOX,
                     A_FLAG | B_FLAG | X_FLAG | Y_FLAG | UP_FLAG | DOWN_FLAG | LEFT_FLAG | RIGHT_FLAG |
                     LB_FLAG | RB_FLAG | PLAY_FLAG | BACK_FLAG | LS_CLK_FLAG | RS_CLK_FLAG,
                     LI_CCAP_ANALOG_TRIGGERS | LI_CCAP_RUMBLE);
+                ilog("input: controller %d found (pads 0x%x), told the host: %d\n", i, mask, r);
                 announced[i] = true;
             }
             if ((p->buttons & QUIT_COMBO) == QUIT_COMBO) {
@@ -300,9 +331,12 @@ static DWORD WINAPI input_stream_main(LPVOID arg)
                 overlay_held[i] = false;
             }
             if (mouse_toggle(m, (unsigned short)i, p->buttons, now)) {
+                ilog(m->on ? "input: controller %d switched to mouse mode (the game gets no controller input "
+                             "until Start is held again)\n"
+                           : "input: controller %d switched back to controller mode\n", i, 0, 0);
                 if (m->on) {
                     /* Release everything on the host's virtual pad (Start is still held). */
-                    LiSendMultiControllerEvent((short)i, (short)mask, 0, 0, 0, 0, 0, 0, 0);
+                    send_pad((short)i, (short)mask, 0, 0, 0, 0, 0, 0, 0);
                 } else {
                     /* The host's pad is still neutral; the next change (releasing Start) sends the real state. */
                     last[i] = *p;
@@ -313,13 +347,21 @@ static DWORD WINAPI input_stream_main(LPVOID arg)
                 continue;
             }
             if (memcmp(p, &last[i], sizeof(*p)) != 0) {
-                LiSendMultiControllerEvent((short)i, (short)mask, p->buttons, p->lt, p->rt, p->lx, p->ly, p->rx, p->ry);
+                send_pad((short)i, (short)mask, p->buttons, p->lt, p->rt, p->lx, p->ly, p->rx, p->ry);
                 last[i] = *p;
             }
         }
+        if (!any_pad && GetTickCount() - started > 3000) {
+            plat_log("input: no controller found in the first 3 seconds\n");
+            any_pad = true;   /* say it once */
+        }
+        if (mask)
+            any_pad = true;
         keyboard_send();
         Sleep(SEND_INTERVAL_MS);
     }
+    ilog("input: stream over: %d controller events sent, %d failed (first error %d)\n", (int)pad_events,
+         (int)pad_event_failures, pad_first_error);
     return 0;
 }
 
@@ -329,6 +371,8 @@ void input_stream_start(void)
     overlay_toggles = 0;
     stream_active = true;
     stream_thread = CreateThread(NULL, 64 * 1024, input_stream_main, NULL, 0, NULL);
+    if (stream_thread == NULL)
+        plat_log("input: couldn't start the input thread; controllers won't reach the host\n");
 }
 
 void input_stream_stop(void)

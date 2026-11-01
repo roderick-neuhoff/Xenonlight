@@ -12,6 +12,9 @@
 
 #include "config.h"
 
+/* Shown in the debug log, so a tester's log says which build it came from. */
+#define XENONLIGHT_VERSION "0.2.1-test1"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
